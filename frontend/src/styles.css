@@ -279,6 +279,12 @@ button.primary:disabled {
   margin-top: 18px;
 }
 
+.faucet-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(45, 30, 18, 0.2);
+}
+
 .input-group {
   display: flex;
   gap: 10px;

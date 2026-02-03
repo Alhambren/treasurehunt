@@ -25,7 +25,7 @@ import {
   CHAIN_ENV_VALID,
   DEMO_MODE,
 } from './config.js';
-import { treasureEngineAbi, mapTokenAbi, huntStakingAbi } from './abi/index.js';
+import { treasureEngineAbi, mapTokenAbi, huntStakingAbi, mockUsdcAbi } from './abi/index.js';
 import { useTxCenter, TxStatus } from './hooks/useTxCenter.js';
 import { usePendingBets } from './hooks/usePendingBets.js';
 import { useLogger } from './hooks/useLogger.js';
@@ -150,6 +150,14 @@ export default function App() {
     writeContract: withdrawHunt,
     isPending: isWithdrawing,
   } = useWriteContract();
+
+  const {
+    writeContract: mintFaucet,
+    data: mintFaucetHash,
+    isPending: isMinting,
+  } = useWriteContract();
+
+  const { isLoading: isWaitingMint, isSuccess: mintSuccess } = useWaitForTransactionReceipt({ hash: mintFaucetHash });
 
   // Wait for transaction receipts
   const { isLoading: isWaitingApproveUsdc, isSuccess: approveUsdcSuccess } = useWaitForTransactionReceipt({ hash: approveUsdcHash });
@@ -649,6 +657,25 @@ export default function App() {
     });
   }, [withdrawHunt, pushEvent, stakingData.stakedBalance]);
 
+  // Faucet - mint 1000 USDC for testing
+  const handleMintFaucet = useCallback(() => {
+    if (!addresses.usdc || !address) return;
+    const amount = parseUnits('1000', DECIMALS.usdc); // 1000 USDC
+    mintFaucet({
+      address: addresses.usdc,
+      abi: mockUsdcAbi,
+      functionName: 'mint',
+      args: [address, amount],
+    });
+    pushEvent({
+      type: 'tx',
+      title: 'Minting test USDC...',
+      detail: '1000 USDC from faucet',
+      meta: 'Transaction submitted',
+      timestamp: Date.now(),
+    });
+  }, [mintFaucet, address, pushEvent]);
+
   // Check if approvals are needed
   const needsEngineApproval = useMemo(() => {
     if (engineAllowance === null || engineAllowance === undefined || !betAmount) return false;
@@ -842,7 +869,7 @@ export default function App() {
 
   const isBusy = isApprovingUsdc || isApprovingHunt || isPlacingBet || isBuyingMap || isSellingMap || isStaking ||
                  isWaitingApproveUsdc || isWaitingApproveHunt || isWaitingBet || isWaitingMap || isWaitingSellMap || isWaitingStake ||
-                 isInitiatingWithdraw || isCancellingWithdraw || isWithdrawing;
+                 isInitiatingWithdraw || isCancellingWithdraw || isWithdrawing || isMinting || isWaitingMint;
 
   return (
     <div className="app">
@@ -944,6 +971,16 @@ export default function App() {
               <span>Your USDC</span>
               <strong>{formatToken(userUsdcBalance, DECIMALS.usdc, 2)} USDC</strong>
             </div>
+          </div>
+          <div className="faucet-row">
+            <button
+              className="secondary"
+              type="button"
+              onClick={handleMintFaucet}
+              disabled={!readEnabled || isBusy}
+            >
+              {isMinting || isWaitingMint ? 'Minting...' : 'Faucet (1000 USDC)'}
+            </button>
           </div>
           <div className="action-row">
             <div className="input-group">
