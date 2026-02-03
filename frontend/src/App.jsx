@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount, useChainId, useReadContracts, useSwitchChain, useWatchContractEvent } from 'wagmi';
-import { formatUnits, isAddress } from 'viem';
+import {
+  useAccount,
+  useChainId,
+  useReadContracts,
+  useSwitchChain,
+  useWatchContractEvent,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from 'wagmi';
+import { formatUnits, parseUnits, isAddress, maxUint256 } from 'viem';
 import { erc20Abi } from 'viem';
 
 import {
@@ -54,8 +62,27 @@ export default function App() {
   const [discovery, setDiscovery] = useState(null);
   const discoveryTimeoutRef = useRef(null);
 
+  // Input states
+  const [betAmount, setBetAmount] = useState('');
+  const [stakeAmount, setStakeAmount] = useState('');
+  const [mapBuyAmount, setMapBuyAmount] = useState('');
+
   const isWrongNetwork = isConnected && chainId !== SUPPORTED_CHAIN_ID;
   const readEnabled = isConnected && !isWrongNetwork && configReady;
+
+  // Write contract hooks
+  const { writeContract: approveUsdc, data: approveUsdcHash, isPending: isApprovingUsdc } = useWriteContract();
+  const { writeContract: approveHunt, data: approveHuntHash, isPending: isApprovingHunt } = useWriteContract();
+  const { writeContract: placeBet, data: placeBetHash, isPending: isPlacingBet } = useWriteContract();
+  const { writeContract: buyMap, data: buyMapHash, isPending: isBuyingMap } = useWriteContract();
+  const { writeContract: stakeHunt, data: stakeHuntHash, isPending: isStaking } = useWriteContract();
+
+  // Wait for transaction receipts
+  const { isLoading: isWaitingApproveUsdc } = useWaitForTransactionReceipt({ hash: approveUsdcHash });
+  const { isLoading: isWaitingApproveHunt } = useWaitForTransactionReceipt({ hash: approveHuntHash });
+  const { isLoading: isWaitingBet } = useWaitForTransactionReceipt({ hash: placeBetHash });
+  const { isLoading: isWaitingMap } = useWaitForTransactionReceipt({ hash: buyMapHash });
+  const { isLoading: isWaitingStake } = useWaitForTransactionReceipt({ hash: stakeHuntHash });
 
   const pushEvent = useCallback((entry) => {
     const time = entry.time ?? formatTime();
@@ -138,11 +165,15 @@ export default function App() {
             { address: addresses.huntToken, abi: erc20Abi, functionName: 'balanceOf', args: [address] },
             { address: addresses.mapToken, abi: mapTokenAbi, functionName: 'balanceOf', args: [address] },
             { address: addresses.huntStaking, abi: huntStakingAbi, functionName: 'stakedBalance', args: [address] },
+            { address: addresses.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [address] },
+            { address: addresses.usdc, abi: erc20Abi, functionName: 'allowance', args: [address, addresses.treasureEngine] },
+            { address: addresses.usdc, abi: erc20Abi, functionName: 'allowance', args: [address, addresses.mapToken] },
+            { address: addresses.huntToken, abi: erc20Abi, functionName: 'allowance', args: [address, addresses.huntStaking] },
           ]
         : [],
     query: {
       enabled: readEnabled && !!address,
-      refetchInterval: false,
+      refetchInterval: 5000,
       watch: true,
     },
   });
@@ -152,7 +183,7 @@ export default function App() {
     return results.map((entry) => entry?.result ?? null);
   }, [globalReads.data]);
 
-  const [huntBalance, mapBalance, stakedBalance] = useMemo(() => {
+  const [huntBalance, mapBalance, stakedBalance, userUsdcBalance, engineAllowance, mapAllowance, stakingAllowance] = useMemo(() => {
     const results = userReads.data || [];
     return results.map((entry) => entry?.result ?? null);
   }, [userReads.data]);
@@ -195,6 +226,174 @@ export default function App() {
     }, 700);
   }, [address, epochId, pushEvent, triggerDiscovery]);
 
+  // Calculate max bet (1% of M)
+  const maxBet = useMemo(() => {
+    if (!mValue) return 0n;
+    return mValue / 100n; // 1% of M
+  }, [mValue]);
+
+  const minBet = 100_000n; // 0.10 USDC
+
+  // Action handlers
+  const handleApproveUsdcForEngine = useCallback(() => {
+    if (!addresses.usdc || !addresses.treasureEngine) return;
+    approveUsdc({
+      address: addresses.usdc,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [addresses.treasureEngine, maxUint256],
+    });
+    pushEvent({
+      type: 'tx',
+      title: 'Approving USDC for betting',
+      detail: 'Transaction submitted...',
+      meta: 'Awaiting confirmation',
+      timestamp: Date.now(),
+    });
+  }, [approveUsdc, pushEvent]);
+
+  const handleApproveUsdcForMap = useCallback(() => {
+    if (!addresses.usdc || !addresses.mapToken) return;
+    approveUsdc({
+      address: addresses.usdc,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [addresses.mapToken, maxUint256],
+    });
+    pushEvent({
+      type: 'tx',
+      title: 'Approving USDC for MAP',
+      detail: 'Transaction submitted...',
+      meta: 'Awaiting confirmation',
+      timestamp: Date.now(),
+    });
+  }, [approveUsdc, pushEvent]);
+
+  const handleApproveHuntForStaking = useCallback(() => {
+    if (!addresses.huntToken || !addresses.huntStaking) return;
+    approveHunt({
+      address: addresses.huntToken,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [addresses.huntStaking, maxUint256],
+    });
+    pushEvent({
+      type: 'tx',
+      title: 'Approving HUNT for staking',
+      detail: 'Transaction submitted...',
+      meta: 'Awaiting confirmation',
+      timestamp: Date.now(),
+    });
+  }, [approveHunt, pushEvent]);
+
+  const handlePlaceBet = useCallback(() => {
+    if (!betAmount || !addresses.treasureEngine) return;
+    const amount = parseUnits(betAmount, DECIMALS.usdc);
+    if (amount < minBet) {
+      pushEvent({
+        type: 'error',
+        title: 'Bet too small',
+        detail: `Minimum bet is ${formatToken(minBet, DECIMALS.usdc, 2)} USDC`,
+        meta: 'Try a larger amount',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+    if (amount > maxBet) {
+      pushEvent({
+        type: 'error',
+        title: 'Bet too large',
+        detail: `Maximum bet is ${formatToken(maxBet, DECIMALS.usdc, 2)} USDC (1% of M)`,
+        meta: 'Try a smaller amount',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+    placeBet({
+      address: addresses.treasureEngine,
+      abi: treasureEngineAbi,
+      functionName: 'placeBet',
+      args: [amount],
+    });
+    pushEvent({
+      type: 'expedition',
+      title: 'Exploring...',
+      detail: `Betting ${betAmount} USDC`,
+      meta: 'Transaction submitted',
+      timestamp: Date.now(),
+    });
+    setBetAmount('');
+  }, [betAmount, placeBet, pushEvent, maxBet]);
+
+  const handleBuyMap = useCallback(() => {
+    if (!mapBuyAmount || !addresses.mapToken) return;
+    const amount = parseUnits(mapBuyAmount, DECIMALS.usdc);
+    buyMap({
+      address: addresses.mapToken,
+      abi: mapTokenAbi,
+      functionName: 'buy',
+      args: [amount],
+    });
+    pushEvent({
+      type: 'map',
+      title: 'Buying MAP...',
+      detail: `Spending ${mapBuyAmount} USDC`,
+      meta: 'Transaction submitted',
+      timestamp: Date.now(),
+    });
+    setMapBuyAmount('');
+  }, [mapBuyAmount, buyMap, pushEvent]);
+
+  const handleStake = useCallback(() => {
+    if (!stakeAmount || !addresses.huntStaking) return;
+    const amount = parseUnits(stakeAmount, DECIMALS.hunt);
+    stakeHunt({
+      address: addresses.huntStaking,
+      abi: huntStakingAbi,
+      functionName: 'stake',
+      args: [amount],
+    });
+    pushEvent({
+      type: 'stake',
+      title: 'Staking HUNT...',
+      detail: `Staking ${stakeAmount} HUNT`,
+      meta: 'Transaction submitted',
+      timestamp: Date.now(),
+    });
+    setStakeAmount('');
+  }, [stakeAmount, stakeHunt, pushEvent]);
+
+  // Check if approvals are needed
+  const needsEngineApproval = useMemo(() => {
+    if (!engineAllowance || !betAmount) return false;
+    try {
+      const amount = parseUnits(betAmount || '0', DECIMALS.usdc);
+      return engineAllowance < amount;
+    } catch {
+      return false;
+    }
+  }, [engineAllowance, betAmount]);
+
+  const needsMapApproval = useMemo(() => {
+    if (!mapAllowance || !mapBuyAmount) return false;
+    try {
+      const amount = parseUnits(mapBuyAmount || '0', DECIMALS.usdc);
+      return mapAllowance < amount;
+    } catch {
+      return false;
+    }
+  }, [mapAllowance, mapBuyAmount]);
+
+  const needsStakingApproval = useMemo(() => {
+    if (!stakingAllowance || !stakeAmount) return false;
+    try {
+      const amount = parseUnits(stakeAmount || '0', DECIMALS.hunt);
+      return stakingAllowance < amount;
+    } catch {
+      return false;
+    }
+  }, [stakingAllowance, stakeAmount]);
+
   useWatchContractEvent({
     address: readEnabled ? addresses.treasureEngine : undefined,
     abi: treasureEngineAbi,
@@ -234,6 +433,54 @@ export default function App() {
           meta: `Epoch ${epoch ?? '--'}`,
           timestamp: Date.now(),
         });
+      });
+    },
+  });
+
+  useWatchContractEvent({
+    address: readEnabled ? addresses.treasureEngine : undefined,
+    abi: treasureEngineAbi,
+    eventName: 'BetPlaced',
+    enabled: readEnabled && !!addresses.treasureEngine,
+    onLogs: (logs) => {
+      logs.forEach((log) => {
+        const { participant, amount, requestId } = log.args || {};
+        if (participant?.toLowerCase() === address?.toLowerCase()) {
+          pushEvent({
+            type: 'expedition',
+            title: 'Bet confirmed',
+            detail: `${formatToken(amount, DECIMALS.usdc, 2)} USDC`,
+            meta: `Request #${requestId} - Awaiting VRF`,
+            timestamp: Date.now(),
+          });
+        }
+      });
+    },
+  });
+
+  useWatchContractEvent({
+    address: readEnabled ? addresses.treasureEngine : undefined,
+    abi: treasureEngineAbi,
+    eventName: 'BetResolved',
+    enabled: readEnabled && !!addresses.treasureEngine,
+    onLogs: (logs) => {
+      logs.forEach((log) => {
+        const { participant, amount, payout } = log.args || {};
+        if (participant?.toLowerCase() === address?.toLowerCase()) {
+          const isWin = payout > 0n;
+          pushEvent({
+            type: isWin ? 'treasure' : 'expedition',
+            title: isWin ? 'You won!' : 'Lost - Contributing to treasure',
+            detail: isWin
+              ? `Won ${formatToken(payout, DECIMALS.usdc, 2)} USDC`
+              : `${formatToken(amount, DECIMALS.usdc, 2)} USDC added to chest`,
+            meta: isWin ? 'Congratulations!' : 'The hunt continues...',
+            timestamp: Date.now(),
+          });
+          if (isWin) {
+            triggerTreasurePulse();
+          }
+        }
       });
     },
   });
@@ -285,6 +532,9 @@ export default function App() {
         : configReady
           ? `Connected to ${SUPPORTED_CHAIN_NAME}`
           : 'Missing contract addresses';
+
+  const isBusy = isApprovingUsdc || isApprovingHunt || isPlacingBet || isBuyingMap || isStaking ||
+                 isWaitingApproveUsdc || isWaitingApproveHunt || isWaitingBet || isWaitingMap || isWaitingStake;
 
   return (
     <div className="app">
@@ -359,24 +609,48 @@ export default function App() {
           <div className="stat-grid">
             <div className="stat">
               <span>Epoch</span>
-              <strong>{epochId ?? '--'}</strong>
+              <strong>{epochId?.toString() ?? '--'}</strong>
             </div>
             <div className="stat">
               <span>Max map size (M)</span>
               <strong>{formatToken(mValue, DECIMALS.usdc, 2)} USDC</strong>
             </div>
             <div className="stat">
-              <span>Discovery rule</span>
-              <strong>{'Forced when J >= M'}</strong>
+              <span>Your USDC</span>
+              <strong>{formatToken(userUsdcBalance, DECIMALS.usdc, 2)} USDC</strong>
             </div>
           </div>
-          <div className="button-row">
-            <button className="ghost" type="button" disabled>
-              Explore (disabled)
-            </button>
-            <button className="ghost" type="button" disabled>
-              Stake (disabled)
-            </button>
+          <div className="action-row">
+            <div className="input-group">
+              <input
+                type="number"
+                placeholder={`Bet amount (${formatToken(minBet, DECIMALS.usdc, 2)} - ${formatToken(maxBet, DECIMALS.usdc, 2)})`}
+                value={betAmount}
+                onChange={(e) => setBetAmount(e.target.value)}
+                disabled={!readEnabled || isBusy}
+                min="0.1"
+                step="0.1"
+              />
+              {needsEngineApproval ? (
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={handleApproveUsdcForEngine}
+                  disabled={!readEnabled || isBusy}
+                >
+                  {isApprovingUsdc || isWaitingApproveUsdc ? 'Approving...' : 'Approve USDC'}
+                </button>
+              ) : (
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={handlePlaceBet}
+                  disabled={!readEnabled || isBusy || !betAmount}
+                >
+                  {isPlacingBet || isWaitingBet ? 'Exploring...' : 'Explore'}
+                </button>
+              )}
+            </div>
           </div>
         </section>
 
@@ -399,9 +673,38 @@ export default function App() {
               <strong>{formatToken(mapBalance, DECIMALS.map, 3)} MAP</strong>
             </div>
           </div>
-          <button className="ghost" type="button" disabled>
-            Buy MAP (disabled)
-          </button>
+          <div className="action-row">
+            <div className="input-group">
+              <input
+                type="number"
+                placeholder="USDC to spend on MAP"
+                value={mapBuyAmount}
+                onChange={(e) => setMapBuyAmount(e.target.value)}
+                disabled={!readEnabled || isBusy}
+                min="0.01"
+                step="0.01"
+              />
+              {needsMapApproval ? (
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={handleApproveUsdcForMap}
+                  disabled={!readEnabled || isBusy}
+                >
+                  {isApprovingUsdc || isWaitingApproveUsdc ? 'Approving...' : 'Approve USDC'}
+                </button>
+              ) : (
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={handleBuyMap}
+                  disabled={!readEnabled || isBusy || !mapBuyAmount}
+                >
+                  {isBuyingMap || isWaitingMap ? 'Buying...' : 'Buy MAP'}
+                </button>
+              )}
+            </div>
+          </div>
         </section>
 
         <section className="panel hunt-panel">
@@ -421,6 +724,38 @@ export default function App() {
             <div className="stat">
               <span>Qualification</span>
               <strong>{stakedBalance && stakedBalance > 0n ? 'Crew active' : 'Inactive'}</strong>
+            </div>
+          </div>
+          <div className="action-row">
+            <div className="input-group">
+              <input
+                type="number"
+                placeholder="HUNT to stake"
+                value={stakeAmount}
+                onChange={(e) => setStakeAmount(e.target.value)}
+                disabled={!readEnabled || isBusy}
+                min="1"
+                step="1"
+              />
+              {needsStakingApproval ? (
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={handleApproveHuntForStaking}
+                  disabled={!readEnabled || isBusy}
+                >
+                  {isApprovingHunt || isWaitingApproveHunt ? 'Approving...' : 'Approve HUNT'}
+                </button>
+              ) : (
+                <button
+                  className="primary"
+                  type="button"
+                  onClick={handleStake}
+                  disabled={!readEnabled || isBusy || !stakeAmount}
+                >
+                  {isStaking || isWaitingStake ? 'Staking...' : 'Stake HUNT'}
+                </button>
+              )}
             </div>
           </div>
         </section>

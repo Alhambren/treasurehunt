@@ -262,6 +262,67 @@ button.primary {
   font-weight: 600;
   cursor: pointer;
   font-family: 'Pirata One', cursive;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+button.primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(214, 167, 82, 0.4);
+}
+
+button.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.action-row {
+  margin-top: 18px;
+}
+
+.input-group {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.input-group input {
+  flex: 1;
+  min-width: 180px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(45, 30, 18, 0.3);
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(214, 167, 82, 0.2);
+}
+
+.input-group input::placeholder {
+  color: rgba(45, 30, 18, 0.5);
+}
+
+.input-group input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.event.tx {
+  border-left-color: rgba(100, 150, 200, 0.8);
+}
+
+.event.stake {
+  border-left-color: rgba(100, 180, 120, 0.8);
+}
+
+.event.error {
+  border-left-color: var(--danger);
+  background: rgba(255, 220, 220, 0.5);
 }
 
 .event-list {
