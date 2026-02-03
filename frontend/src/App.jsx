@@ -32,72 +32,68 @@ import { useLogger } from './hooks/useLogger.js';
 import { useStakingData } from './components/StakingPanel.jsx';
 
 // ============================================================================
-// CARTOGRAPHER'S NOTES — Global Overlay System
+// DESIGN TOKENS — Card-based composition
 // ============================================================================
-const NOTE_WIDTH = 280;
-const NOTE_HEIGHT_ESTIMATE = 72;
+const CARD_WIDTH = 320; // Fixed card width
+const CARD_GAP = 16;
+const CARD_PADDING = 20;
+
+// ============================================================================
+// CARTOGRAPHER'S NOTES — Floating ? Explainers
+// Highest z-index, next to labels, dismiss on mouse leave
+// ============================================================================
+const NOTE_WIDTH = 260;
 
 const cartographerNotes = {
   expedition: "The expedition advances each time the treasure is found. This is how far we've come.",
   mapSize: "The treasure chest can hold no more than this. When reached or found, the chest resets and doubles.",
   contributions: "Every explorer who gives to the sea is marked here. The more who contribute, the less HUNT is minted.",
-  emissionRate: "HUNT flows freely at first, then slows as the map fills with names. The early discoverers find the richest waters.",
-  treasureChest: "Gold accumulates here until the chest is found. Anyone may discover it — the sea chooses.",
-  beginExploration: "This is how you contribute to the expedition. Part goes to the chest. Part to the map. Part to the crew.",
-  tidesOfFortune: "These are the possible fates of each exploration. The sea decides.",
-  captainsLog: "The record of this voyage. Events, discoveries, and the crew's fortunes are written here.",
-  huntWallet: "The token earned through exploration. Stake it to earn a seat at the crew's table.",
-  huntStaked: "HUNT stowed below deck. Stake holders share in every discovery — if they've explored this expedition.",
-  stakingCooldown: "It takes seven days to leave the crew. This is the remaining time before HUNT may be withdrawn.",
-  map: "A bonding-curve token reflecting the progress of the expedition. Bought with USDC. Rises as others contribute.",
-  mapPrice: "The current cost to acquire one MAP. This increases as the map supply grows.",
-  mapSupply: "How much MAP exists. New MAP is minted through the bonding curve or earned by stakers.",
-  mapState: "The tier of the current map, from Blank Parchment to Myth Made Real.",
-  globalDiscovery: "When the chest is found, the discoverer receives half. Stakers who explored this expedition share the rest.",
+  emissionRate: "HUNT flows freely at first, then slows as the map fills with names.",
+  treasureChest: "Gold accumulates here until found. Anyone may discover it — the sea chooses.",
+  beginExploration: "Contribute to the expedition. Losses fund the chest. Wins return multiplied.",
+  huntWallet: "The token earned through exploration. Stake it to share in discoveries.",
+  huntStaked: "HUNT stowed below deck. Stakers share discoveries — if they've explored this expedition.",
+  stakingCooldown: "Seven days to leave the crew. This is the remaining time before withdrawal.",
+  map: "A bonding-curve token. Bought with USDC. Rises as others contribute.",
+  mapPrice: "The current cost to acquire one MAP. Increases as supply grows.",
+  mapSupply: "Total MAP in existence. Minted through the bonding curve.",
+  mapState: "The tier of the map, from Blank Parchment to Myth Made Real.",
+  captainsLog: "The record of this voyage. Events, discoveries, and fortunes.",
+  tidesOfFortune: "The possible fates of each exploration. The sea decides.",
 };
 
 const CartographerNotesContext = createContext(null);
 
-const computePosition = (anchorRect) => {
-  if (!anchorRect) return { top: 0, left: 0, flipped: false };
-  const viewportHeight = window.innerHeight;
-  const viewportWidth = window.innerWidth;
-  const spaceBelow = viewportHeight - anchorRect.bottom;
-  const flipped = spaceBelow < NOTE_HEIGHT_ESTIMATE + 12;
-  const top = flipped ? anchorRect.top - NOTE_HEIGHT_ESTIMATE - 6 : anchorRect.bottom + 6;
-  let left = anchorRect.left;
-  if (left + NOTE_WIDTH > viewportWidth - 12) left = viewportWidth - NOTE_WIDTH - 12;
-  if (left < 12) left = 12;
-  return { top, left, flipped };
-};
-
-const CartographerNotesOverlay = ({ activeNote, position }) => {
-  if (!activeNote) return null;
+const CartographerNotesOverlay = ({ activeNote, anchorRect }) => {
+  if (!activeNote || !anchorRect) return null;
   const note = cartographerNotes[activeNote];
   if (!note) return null;
+
+  // Position near the anchor, not at edges
+  const top = anchorRect.bottom + 8;
+  const left = Math.max(12, Math.min(anchorRect.left, window.innerWidth - NOTE_WIDTH - 12));
+
   return (
-    <div
-      id="cartographers-notes-root"
-      style={{
-        position: 'fixed',
-        top: position.top,
-        left: position.left,
-        width: NOTE_WIDTH,
-        zIndex: 9999,
-        pointerEvents: 'none',
-        animation: position.flipped ? 'noteSlideUp 0.15s ease-out' : 'noteSlideDown 0.15s ease-out',
-        fontFamily: "'IM Fell English', serif",
-      }}
-    >
+    <div style={{
+      position: 'fixed',
+      top,
+      left,
+      width: NOTE_WIDTH,
+      zIndex: 99999, // Highest z-index
+      pointerEvents: 'none',
+      animation: 'fadeIn 0.15s ease-out',
+    }}>
       <div style={{
-        padding: '12px 16px',
-        background: 'linear-gradient(180deg, #f0e6d2 0%, #e8dcc4 50%, #dfd2b8 100%)',
-        borderRadius: '3px',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.3), 0 2px 4px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.5)',
+        padding: '12px 14px',
+        background: '#f5efe0',
+        border: '1px solid #c9b896',
+        borderRadius: '4px',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
         color: '#4a3a28',
-        fontSize: '14px',
+        fontSize: '13px',
         fontStyle: 'italic',
-        lineHeight: '1.4',
+        lineHeight: 1.5,
+        fontFamily: "'IM Fell English', Georgia, serif",
       }}>
         {note}
       </div>
@@ -105,37 +101,40 @@ const CartographerNotesOverlay = ({ activeNote, position }) => {
   );
 };
 
-const CartographerNote = ({ noteKey }) => {
-  const manager = useContext(CartographerNotesContext);
-  const anchorRef = useRef(null);
+// Floating ? icon - sits next to labels, dismisses on leave
+const NoteIcon = ({ noteKey }) => {
+  const ctx = useContext(CartographerNotesContext);
+  const ref = useRef(null);
   if (!cartographerNotes[noteKey]) return null;
-
-  const handleMouseEnter = () => {
-    if (anchorRef.current && manager) {
-      manager.show(noteKey, anchorRef.current.getBoundingClientRect());
-    }
-  };
-
-  const isActive = manager?.activeNote === noteKey;
 
   return (
     <span
-      ref={anchorRef}
-      onMouseEnter={handleMouseEnter}
-      onTouchStart={() => isActive ? manager?.forceClose() : handleMouseEnter()}
-      style={{ display: 'inline-block', marginLeft: '6px', verticalAlign: 'middle', cursor: 'help' }}
-    >
-      <span style={{
-        display: 'inline-block',
-        width: '5px',
-        height: '5px',
+      ref={ref}
+      onMouseEnter={() => {
+        if (ref.current && ctx) {
+          ctx.show(noteKey, ref.current.getBoundingClientRect());
+        }
+      }}
+      onMouseLeave={() => ctx?.hide()}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 14,
+        height: 14,
+        marginLeft: 6,
         borderRadius: '50%',
-        background: isActive
-          ? 'radial-gradient(circle at 30% 30%, #5c4a32 0%, #3d2818 100%)'
-          : 'radial-gradient(circle at 30% 30%, #8b7355 0%, #6b5c47 100%)',
-        opacity: isActive ? 1 : 0.5,
-        transition: 'opacity 0.15s',
-      }} />
+        background: ctx?.activeNote === noteKey ? '#8b7355' : '#c9b896',
+        color: ctx?.activeNote === noteKey ? '#fff' : '#5c4a32',
+        fontSize: 10,
+        fontWeight: 600,
+        cursor: 'help',
+        verticalAlign: 'middle',
+        transition: 'all 0.15s',
+        fontStyle: 'normal',
+      }}
+    >
+      ?
     </span>
   );
 };
@@ -143,18 +142,12 @@ const CartographerNote = ({ noteKey }) => {
 // ============================================================================
 // UTILITIES
 // ============================================================================
-const EXPLORER_BASE = SUPPORTED_CHAIN_ID === 84532
-  ? 'https://sepolia.basescan.org'
-  : 'https://basescan.org';
-
-const formatWithCommas = (value) => value.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-
 const formatToken = (value, decimals, maxFrac = 4) => {
   if (value === null || value === undefined) return '--';
   const raw = formatUnits(value, decimals);
   const [whole, frac = ''] = raw.split('.');
   const clipped = frac.slice(0, maxFrac).replace(/0+$/, '');
-  const wholeFormatted = formatWithCommas(whole);
+  const wholeFormatted = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return clipped.length ? `${wholeFormatted}.${clipped}` : wholeFormatted;
 };
 
@@ -163,16 +156,9 @@ const shortAddress = (value) => {
   return `${value.slice(0, 6)}…${value.slice(-4)}`;
 };
 
-const formatTime = () =>
-  new Date().toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+const formatTime = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
 
-const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
-
-// Canonical Tides of Fortune outcomes
 const outcomes = [
   { name: "0×", label: "The Sea Claims Its Due", probability: 0.40, multiplier: 0 },
   { name: "½×", label: "A Modest Return", probability: 0.22, multiplier: 0.5 },
@@ -181,6 +167,14 @@ const outcomes = [
   { name: "2×", label: "Strong Tides", probability: 0.06, multiplier: 2.0 },
   { name: "4×", label: "A Rare Surge", probability: 0.03, multiplier: 4.0 },
   { name: "10×", label: "Legendary Fortune", probability: 0.01, multiplier: 10.0 },
+];
+
+const mapBuyMessages = [
+  "The gods favor us.",
+  "New coastlines emerge.",
+  "The winds are with us.",
+  "The parchment grows wiser.",
+  "Old ink finds new meaning.",
 ];
 
 const getMapTier = (price) => {
@@ -195,90 +189,149 @@ const getMapTier = (price) => {
 };
 
 // ============================================================================
-// UI COMPONENTS — Canonical styling
+// CARD COMPONENT — Fixed width, consistent styling
 // ============================================================================
-const ParchmentPanel = ({ children, className = '', glow = false, dark = false }) => (
-  <div
-    className={`relative ${className}`}
-    style={{
-      background: dark
-        ? 'linear-gradient(165deg, #1a1812 0%, #12100c 100%)'
-        : 'linear-gradient(165deg, #e8dcc4 0%, #d4c4a0 50%, #c9b896 100%)',
-      borderRadius: '4px',
-      boxShadow: glow
-        ? '0 0 30px rgba(201, 162, 39, 0.5), inset 0 1px 0 rgba(255,255,255,0.1)'
-        : 'inset 0 1px 0 rgba(255,255,255,0.1), 0 4px 12px rgba(0,0,0,0.4)',
-      border: glow ? '3px solid #c9a227' : '2px solid #8b7355',
-    }}
-  >
-    <div style={{
-      position: 'absolute',
-      inset: 0,
-      background: dark ? 'none' : `url("data:image/svg+xml,%3Csvg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-      opacity: 0.03,
-      pointerEvents: 'none',
-      borderRadius: '4px',
-    }} />
-    <div className="relative z-10">{children}</div>
+const Card = ({ children, title, noteKey, width = CARD_WIDTH, glow = false, style = {} }) => (
+  <div style={{
+    width,
+    background: '#f8f4eb',
+    border: glow ? '2px solid #c9a227' : '1px solid #d4c4a0',
+    borderRadius: 8,
+    boxShadow: glow
+      ? '0 0 20px rgba(201, 162, 39, 0.3), 0 4px 12px rgba(0,0,0,0.1)'
+      : '0 2px 8px rgba(0,0,0,0.08)',
+    overflow: 'hidden',
+    ...style,
+  }}>
+    {title && (
+      <div style={{
+        padding: '12px 16px',
+        borderBottom: '1px solid #e8dcc4',
+        background: '#f0e6d2',
+      }}>
+        <span style={{
+          fontFamily: "'Pirata One', cursive",
+          fontSize: 18,
+          color: '#3d3210',
+        }}>
+          {title}
+          {noteKey && <NoteIcon noteKey={noteKey} />}
+        </span>
+      </div>
+    )}
+    <div style={{ padding: CARD_PADDING }}>
+      {children}
+    </div>
   </div>
 );
 
-const WoodButton = ({ onClick, disabled, children, variant = 'primary', className = '' }) => (
+// Small stat card for expedition state
+const StatCard = ({ label, value, noteKey }) => (
+  <div style={{
+    background: '#f8f4eb',
+    border: '1px solid #d4c4a0',
+    borderRadius: 6,
+    padding: '12px 16px',
+    textAlign: 'center',
+    minWidth: 140,
+  }}>
+    <div style={{
+      fontSize: 12,
+      color: '#6b5c47',
+      marginBottom: 4,
+      fontFamily: "'IM Fell English', Georgia, serif",
+    }}>
+      {label}
+      {noteKey && <NoteIcon noteKey={noteKey} />}
+    </div>
+    <div style={{
+      fontSize: 20,
+      fontWeight: 600,
+      color: '#3d3210',
+      fontFamily: "'Pirata One', cursive",
+    }}>
+      {value}
+    </div>
+  </div>
+);
+
+// Row inside a card
+const CardRow = ({ label, value, noteKey, highlight = false }) => (
+  <div style={{
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 0',
+    borderBottom: '1px solid #e8dcc4',
+  }}>
+    <span style={{
+      fontSize: 14,
+      color: '#5c4a32',
+      fontFamily: "'IM Fell English', Georgia, serif",
+    }}>
+      {label}
+      {noteKey && <NoteIcon noteKey={noteKey} />}
+    </span>
+    <span style={{
+      fontSize: 16,
+      fontWeight: highlight ? 600 : 400,
+      color: highlight ? '#3d3210' : '#4a3a28',
+      fontFamily: "'Pirata One', cursive",
+    }}>
+      {value}
+    </span>
+  </div>
+);
+
+// Button
+const Btn = ({ children, onClick, disabled, variant = 'primary', style = {} }) => (
   <button
     onClick={onClick}
     disabled={disabled}
-    className={`relative font-pirata tracking-wide transition-all ${className}`}
     style={{
-      background: disabled
-        ? 'linear-gradient(180deg, #4a4035 0%, #2d2820 100%)'
-        : variant === 'primary'
-          ? 'linear-gradient(180deg, #8b6914 0%, #5c4a12 50%, #3d3210 100%)'
-          : variant === 'danger'
-            ? 'linear-gradient(180deg, #6b3030 0%, #4a2020 100%)'
-            : 'linear-gradient(180deg, #5c4a32 0%, #3d3220 100%)',
-      color: disabled ? '#6b5c47' : '#f5e6c8',
-      border: disabled ? '2px solid #3d3428' : '2px solid #8b7355',
-      borderRadius: '4px',
-      boxShadow: disabled ? 'none' : '0 4px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.15)',
-      textShadow: disabled ? 'none' : '0 1px 2px rgba(0,0,0,0.5)',
+      width: '100%',
+      padding: '12px 16px',
+      border: 'none',
+      borderRadius: 6,
+      fontSize: 16,
+      fontFamily: "'Pirata One', cursive",
       cursor: disabled ? 'not-allowed' : 'pointer',
+      opacity: disabled ? 0.5 : 1,
+      transition: 'all 0.15s',
+      background: variant === 'primary'
+        ? 'linear-gradient(180deg, #8b6914 0%, #5c4a12 100%)'
+        : variant === 'danger'
+          ? 'linear-gradient(180deg, #8b3030 0%, #5c2020 100%)'
+          : '#e8dcc4',
+      color: variant === 'primary' || variant === 'danger' ? '#f5e6c8' : '#5c4a32',
+      boxShadow: disabled ? 'none' : '0 2px 4px rgba(0,0,0,0.2)',
+      ...style,
     }}
   >
     {children}
   </button>
 );
 
-const BrassPlaque = ({ label, value, subvalue, tick, noteKey }) => (
-  <div
-    className="relative p-3 text-center"
+// Input
+const Input = ({ value, onChange, placeholder, disabled, type = 'number', style = {} }) => (
+  <input
+    type={type}
+    value={value}
+    onChange={onChange}
+    placeholder={placeholder}
+    disabled={disabled}
     style={{
-      background: 'linear-gradient(180deg, #c9a227 0%, #a08020 50%, #806515 100%)',
-      borderRadius: '3px',
-      border: '2px solid #5c4a12',
-      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.3), 0 2px 4px rgba(0,0,0,0.4)',
+      width: '100%',
+      padding: '10px 12px',
+      border: '1px solid #c9b896',
+      borderRadius: 6,
+      fontSize: 16,
+      background: disabled ? '#f0e6d2' : '#fff',
+      color: '#3d3210',
+      fontFamily: "'IM Fell English', Georgia, serif",
+      ...style,
     }}
-  >
-    <div className="font-fell text-xs" style={{ color: '#3d3210', textShadow: '0 1px 0 rgba(255,255,255,0.3)' }}>
-      {label}
-      {noteKey && <CartographerNote noteKey={noteKey} />}
-    </div>
-    <div className="font-pirata text-lg flex items-center justify-center gap-1" style={{ color: '#1a1510', textShadow: '0 1px 0 rgba(255,255,255,0.2)' }}>
-      {value}
-      {tick === 'up' && <span className="text-emerald-800 animate-pulse">▲</span>}
-      {tick === 'down' && <span className="text-red-800 animate-pulse">▼</span>}
-    </div>
-    {subvalue && (
-      <div className="font-fell text-xs" style={{ color: '#4a3d20' }}>{subvalue}</div>
-    )}
-  </div>
-);
-
-const InkDivider = () => (
-  <div className="my-4 flex items-center justify-center gap-3">
-    <div className="flex-1 h-px" style={{ background: 'linear-gradient(90deg, transparent, #5c4a32, #5c4a32)' }} />
-    <span style={{ color: '#5c4a32' }}>✦</span>
-    <div className="flex-1 h-px" style={{ background: 'linear-gradient(90deg, #5c4a32, #5c4a32, transparent)' }} />
-  </div>
+  />
 );
 
 // ============================================================================
@@ -290,7 +343,7 @@ export default function App() {
   const { switchChain } = useSwitchChain();
   const publicClient = usePublicClient();
 
-  // Custom hooks
+  // Hooks
   const { txHistory, addTx, updateTx, clearHistory } = useTxCenter();
   const { pendingBetsArray, addPendingBet, resolveBet } = usePendingBets();
   const { logTx, logEvent, logError } = useLogger(chainId);
@@ -300,73 +353,33 @@ export default function App() {
   const [log, setLog] = useState([]);
   const [showFullLog, setShowFullLog] = useState(false);
   const [treasureGlow, setTreasureGlow] = useState(false);
-  const [mapPriceTick, setMapPriceTick] = useState(null);
+  const [mapMessage, setMapMessage] = useState(null);
   const [showDiscovery, setShowDiscovery] = useState(false);
   const [discovery, setDiscovery] = useState(null);
   const [lastOutcome, setLastOutcome] = useState(null);
   const discoveryTimeoutRef = useRef(null);
-  const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
 
-  // Input states
+  // Inputs
   const [betAmount, setBetAmount] = useState('');
   const [stakeAmount, setStakeAmount] = useState('');
   const [mapBuyAmount, setMapBuyAmount] = useState('');
   const [mapSellAmount, setMapSellAmount] = useState('');
   const [mapTradeMode, setMapTradeMode] = useState('buy');
 
-  // Cartographer's Notes state
+  // Notes state
   const [activeNote, setActiveNote] = useState(null);
-  const [noteAnchorRect, setNoteAnchorRect] = useState(null);
-  const anchorRectRef = useRef(null);
-
-  const noteClose = () => {
-    setActiveNote(null);
-    setNoteAnchorRect(null);
-    anchorRectRef.current = null;
-  };
-
-  useEffect(() => {
-    if (!activeNote || !anchorRectRef.current) return;
-    const rect = anchorRectRef.current;
-    const pad = 8;
-    const onPointerMove = (e) => {
-      const x = e.clientX;
-      const y = e.clientY;
-      const inside = x >= (rect.left - pad) && x <= (rect.right + pad) &&
-                     y >= (rect.top - pad) && y <= (rect.bottom + pad);
-      if (!inside) noteClose();
-    };
-    const onScroll = () => noteClose();
-    const onResize = () => noteClose();
-    const onKeyDown = (e) => { if (e.key === 'Escape') noteClose(); };
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onResize);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onResize);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [activeNote]);
+  const [noteRect, setNoteRect] = useState(null);
 
   const noteManager = {
     activeNote,
-    show: (noteKey, rect) => {
-      anchorRectRef.current = rect;
-      setActiveNote(noteKey);
-      setNoteAnchorRect(rect);
-    },
-    forceClose: noteClose,
+    show: (key, rect) => { setActiveNote(key); setNoteRect(rect); },
+    hide: () => { setActiveNote(null); setNoteRect(null); },
   };
-
-  const notePosition = computePosition(noteAnchorRect);
 
   const isWrongNetwork = isConnected && chainId !== SUPPORTED_CHAIN_ID;
   const readEnabled = isConnected && !isWrongNetwork && configReady;
 
-  // Write contract hooks
+  // Write hooks
   const { writeContract: approveUsdc, data: approveUsdcHash, isPending: isApprovingUsdc } = useWriteContract();
   const { writeContract: approveHunt, data: approveHuntHash, isPending: isApprovingHunt } = useWriteContract();
   const { writeContract: placeBet, data: placeBetHash, isPending: isPlacingBet } = useWriteContract();
@@ -379,33 +392,37 @@ export default function App() {
   const { writeContract: mintFaucet, data: mintFaucetHash, isPending: isMinting } = useWriteContract();
 
   const { isLoading: isWaitingMint } = useWaitForTransactionReceipt({ hash: mintFaucetHash });
-  const { isLoading: isWaitingApproveUsdc, isSuccess: approveUsdcSuccess } = useWaitForTransactionReceipt({ hash: approveUsdcHash });
+  const { isLoading: isWaitingApproveUsdc } = useWaitForTransactionReceipt({ hash: approveUsdcHash });
   const { isLoading: isWaitingApproveHunt } = useWaitForTransactionReceipt({ hash: approveHuntHash });
-  const { isLoading: isWaitingBet, isSuccess: betSuccess, data: betReceipt } = useWaitForTransactionReceipt({ hash: placeBetHash });
+  const { isLoading: isWaitingBet } = useWaitForTransactionReceipt({ hash: placeBetHash });
   const { isLoading: isWaitingMap } = useWaitForTransactionReceipt({ hash: buyMapHash });
   const { isLoading: isWaitingSellMap } = useWaitForTransactionReceipt({ hash: sellMapHash });
   const { isLoading: isWaitingStake } = useWaitForTransactionReceipt({ hash: stakeHuntHash });
 
-  const addLog = useCallback((message, type = 'info') => {
-    setLog(prev => [...prev.slice(-19), { message, type, time: formatTime() }]);
+  const addLog = useCallback((message, type = 'info', detail = null) => {
+    setLog(prev => [...prev.slice(-29), { message, type, detail, time: formatTime() }]);
   }, []);
 
   const triggerTreasureGlow = useCallback(() => {
     setTreasureGlow(true);
-    window.setTimeout(() => setTreasureGlow(false), 2600);
+    setTimeout(() => setTreasureGlow(false), 2500);
+  }, []);
+
+  const triggerMapMessage = useCallback(() => {
+    const msg = mapBuyMessages[Math.floor(Math.random() * mapBuyMessages.length)];
+    setMapMessage(msg);
+    setTimeout(() => setMapMessage(null), 3000);
   }, []);
 
   const triggerDiscovery = useCallback((payload) => {
     setDiscovery(payload);
     setShowDiscovery(true);
     triggerTreasureGlow();
-    if (discoveryTimeoutRef.current) window.clearTimeout(discoveryTimeoutRef.current);
-    discoveryTimeoutRef.current = window.setTimeout(() => setShowDiscovery(false), 5000);
+    if (discoveryTimeoutRef.current) clearTimeout(discoveryTimeoutRef.current);
+    discoveryTimeoutRef.current = setTimeout(() => setShowDiscovery(false), 5000);
   }, [triggerTreasureGlow]);
 
-  useEffect(() => {
-    return () => { if (discoveryTimeoutRef.current) window.clearTimeout(discoveryTimeoutRef.current); };
-  }, []);
+  useEffect(() => () => { if (discoveryTimeoutRef.current) clearTimeout(discoveryTimeoutRef.current); }, []);
 
   // Contract reads
   const globalReads = useReadContracts({
@@ -436,24 +453,22 @@ export default function App() {
     query: { enabled: readEnabled && !!address, refetchInterval: 5000 },
   });
 
-  const [jBalance, mValue, epochId, n0Value, usdcBalance, mapPrice, mapSupply] = useMemo(() => {
-    const results = globalReads.data || [];
-    return results.map((entry) => entry?.result ?? null);
+  const [jBalance, mValue, epochId, n0Value, , mapPrice, mapSupply] = useMemo(() => {
+    return (globalReads.data || []).map(e => e?.result ?? null);
   }, [globalReads.data]);
 
   const [huntBalance, mapBalance, stakedBalance, userUsdcBalance, engineAllowance, mapAllowance, stakingAllowance] = useMemo(() => {
-    const results = userReads.data || [];
-    return results.map((entry) => entry?.result ?? null);
+    return (userReads.data || []).map(e => e?.result ?? null);
   }, [userReads.data]);
 
   const chestProgress = useMemo(() => {
     if (!jBalance || !mValue || mValue === 0n) return 0;
-    const basisPoints = (jBalance * 10000n) / mValue;
-    return clamp(Number(basisPoints) / 100, 0, 100);
+    return clamp(Number((jBalance * 10000n) / mValue) / 100, 0, 100);
   }, [jBalance, mValue]);
 
   const maxBet = useMemo(() => mValue ? mValue / 100n : 0n, [mValue]);
   const minBet = 100_000n;
+  const mapTier = getMapTier(mapPrice);
 
   // Approval checks
   const needsEngineApproval = useMemo(() => {
@@ -475,7 +490,7 @@ export default function App() {
   const handleApproveUsdcForEngine = useCallback(() => {
     if (!addresses.usdc || !addresses.treasureEngine) return;
     approveUsdc({ address: addresses.usdc, abi: erc20Abi, functionName: 'approve', args: [addresses.treasureEngine, maxUint256] });
-    addLog("Approving USDC for the expedition...", 'tx');
+    addLog("Approving USDC for exploration...", 'tx');
   }, [approveUsdc, addLog]);
 
   const handleApproveUsdcForMap = useCallback(() => {
@@ -487,7 +502,7 @@ export default function App() {
   const handleApproveHuntForStaking = useCallback(() => {
     if (!addresses.huntToken || !addresses.huntStaking) return;
     approveHunt({ address: addresses.huntToken, abi: erc20Abi, functionName: 'approve', args: [addresses.huntStaking, maxUint256] });
-    addLog("Approving HUNT for the ship's hold...", 'tx');
+    addLog("Approving HUNT for staking...", 'tx');
   }, [approveHunt, addLog]);
 
   const handlePlaceBet = useCallback(() => {
@@ -495,13 +510,13 @@ export default function App() {
     try {
       const amount = parseUnits(betAmount, DECIMALS.usdc);
       if (amount < minBet || amount > maxBet) {
-        addLog("The sea refuses the command.", 'error');
+        addLog("Amount out of range", 'error');
         return;
       }
       placeBet({ address: addresses.treasureEngine, abi: treasureEngineAbi, functionName: 'placeBet', args: [amount] });
-      addLog(`Contributing ${betAmount} USDC to the expedition...`, 'expedition');
+      addLog(`Exploring with ${betAmount} USDC...`, 'expedition');
       setBetAmount('');
-    } catch (e) { logError('place-bet-parse', e); }
+    } catch (e) { logError('place-bet', e); }
   }, [betAmount, placeBet, addLog, maxBet, logError]);
 
   const handleBuyMap = useCallback(() => {
@@ -511,7 +526,7 @@ export default function App() {
       buyMap({ address: addresses.mapToken, abi: mapTokenAbi, functionName: 'buy', args: [amount] });
       addLog(`Acquiring MAP for ${mapBuyAmount} USDC...`, 'map');
       setMapBuyAmount('');
-    } catch (e) { logError('buy-map-parse', e); }
+    } catch (e) { logError('buy-map', e); }
   }, [mapBuyAmount, buyMap, addLog, logError]);
 
   const handleSellMap = useCallback(() => {
@@ -519,9 +534,9 @@ export default function App() {
     try {
       const amount = parseUnits(mapSellAmount, DECIMALS.map);
       sellMap({ address: addresses.mapToken, abi: mapTokenAbi, functionName: 'sell', args: [amount] });
-      addLog(`Returning ${mapSellAmount} MAP to the sea...`, 'map');
+      addLog(`Returning ${mapSellAmount} MAP...`, 'map');
       setMapSellAmount('');
-    } catch (e) { logError('sell-map-parse', e); }
+    } catch (e) { logError('sell-map', e); }
   }, [mapSellAmount, sellMap, addLog, logError]);
 
   const handleStake = useCallback(() => {
@@ -529,41 +544,39 @@ export default function App() {
     try {
       const amount = parseUnits(stakeAmount, DECIMALS.hunt);
       stakeHunt({ address: addresses.huntStaking, abi: huntStakingAbi, functionName: 'stake', args: [amount] });
-      addLog("HUNT stowed below deck.", 'stake');
+      addLog("Stowing HUNT below deck...", 'stake');
       setStakeAmount('');
-    } catch (e) { logError('stake-parse', e); }
+    } catch (e) { logError('stake', e); }
   }, [stakeAmount, stakeHunt, addLog, logError]);
 
   const handleInitiateWithdraw = useCallback(() => {
     if (!addresses.huntStaking) return;
     initiateWithdraw({ address: addresses.huntStaking, abi: huntStakingAbi, functionName: 'initiateWithdraw' });
-    addLog("The gangplank lowers in seven days.", 'stake');
+    addLog("Starting 7-day cooldown...", 'stake');
   }, [initiateWithdraw, addLog]);
 
   const handleCancelWithdraw = useCallback(() => {
     if (!addresses.huntStaking) return;
     cancelWithdraw({ address: addresses.huntStaking, abi: huntStakingAbi, functionName: 'cancelWithdraw' });
-    addLog("No sailor leaves mid-watch.", 'stake');
+    addLog("Cooldown cancelled.", 'stake');
   }, [cancelWithdraw, addLog]);
 
   const handleWithdraw = useCallback(() => {
     if (!addresses.huntStaking || !stakingData.stakedBalance) return;
     withdrawHunt({ address: addresses.huntStaking, abi: huntStakingAbi, functionName: 'withdraw', args: [stakingData.stakedBalance] });
-    addLog("HUNT returned to the hold.", 'stake');
+    addLog("Withdrawing HUNT...", 'stake');
   }, [withdrawHunt, addLog, stakingData.stakedBalance]);
 
   const handleMintFaucet = useCallback(() => {
     if (!addresses.usdc || !address) return;
-    const amount = parseUnits('1000', DECIMALS.usdc);
-    mintFaucet({ address: addresses.usdc, abi: mockUsdcAbi, functionName: 'mint', args: [address, amount] });
-    addLog("Minting 1000 test USDC from faucet...", 'tx');
+    mintFaucet({ address: addresses.usdc, abi: mockUsdcAbi, functionName: 'mint', args: [address, parseUnits('1000', DECIMALS.usdc)] });
+    addLog("Minting 1000 test USDC...", 'tx');
   }, [mintFaucet, address, addLog]);
 
   // Max buttons
   const handleMaxBet = useCallback(() => {
     if (!userUsdcBalance || !maxBet) return;
-    const max = userUsdcBalance < maxBet ? userUsdcBalance : maxBet;
-    setBetAmount(formatUnits(max, DECIMALS.usdc));
+    setBetAmount(formatUnits(userUsdcBalance < maxBet ? userUsdcBalance : maxBet, DECIMALS.usdc));
   }, [userUsdcBalance, maxBet]);
 
   const handleMaxStake = useCallback(() => {
@@ -573,16 +586,14 @@ export default function App() {
 
   const handleMaxMapBuy = useCallback(() => {
     if (!userUsdcBalance) return;
-    const maxBuyVal = 50_000_000_000n;
-    const max = userUsdcBalance < maxBuyVal ? userUsdcBalance : maxBuyVal;
-    setMapBuyAmount(formatUnits(max, DECIMALS.usdc));
+    const max = 50_000_000_000n;
+    setMapBuyAmount(formatUnits(userUsdcBalance < max ? userUsdcBalance : max, DECIMALS.usdc));
   }, [userUsdcBalance]);
 
   const handleMaxMapSell = useCallback(() => {
     if (!mapBalance || !mapSupply) return;
-    const maxSell = mapSupply / 100n;
-    const max = mapBalance < maxSell ? mapBalance : maxSell;
-    setMapSellAmount(formatUnits(max, DECIMALS.map));
+    const max = mapSupply / 100n;
+    setMapSellAmount(formatUnits(mapBalance < max ? mapBalance : max, DECIMALS.map));
   }, [mapBalance, mapSupply]);
 
   // Event watchers
@@ -594,8 +605,8 @@ export default function App() {
     onLogs: (logs) => {
       logs.forEach((lg) => {
         const { discoverer, amount, epochId: epoch } = lg.args || {};
-        logEvent('TreasureDiscovered', { discoverer, amount: amount?.toString(), epoch: epoch?.toString() });
-        addLog(`⚓ TREASURE FOUND! ${formatToken(amount, DECIMALS.usdc, 2)} USDC discovered.`, 'discovery');
+        logEvent('TreasureDiscovered', { discoverer, amount: amount?.toString() });
+        addLog(`⚓ TREASURE FOUND!`, 'discovery', `${formatToken(amount, DECIMALS.usdc, 2)} USDC`);
         triggerDiscovery({ amount, epoch, discoverer });
       });
     },
@@ -609,10 +620,9 @@ export default function App() {
     onLogs: (logs) => {
       logs.forEach((lg) => {
         const { participant, amount, requestId } = lg.args || {};
-        logEvent('BetPlaced', { participant, amount: amount?.toString(), requestId: requestId?.toString() });
         if (participant?.toLowerCase() === address?.toLowerCase()) {
           addPendingBet(requestId, { amount, bettor: participant, txHash: lg.transactionHash });
-          addLog(`Contribution confirmed. Awaiting the oracle's wisdom...`, 'expedition');
+          addLog(`Awaiting the oracle...`, 'expedition');
         }
       });
     },
@@ -626,22 +636,19 @@ export default function App() {
     onLogs: (logs) => {
       logs.forEach((lg) => {
         const { participant, amount, payout, outcomeIndex } = lg.args || {};
-        logEvent('BetResolved', { participant, amount: amount?.toString(), payout: payout?.toString(), outcomeIndex });
         if (participant?.toLowerCase() === address?.toLowerCase()) {
           const isWin = payout > 0n;
           const outcomeData = outcomes[outcomeIndex] || outcomes[0];
           setLastOutcome(outcomeData);
-          pendingBetsArray.forEach(bet => {
-            if (bet.bettor?.toLowerCase() === participant?.toLowerCase()) {
-              resolveBet(bet.requestId, { payout, outcomeIndex, isWin });
+          pendingBetsArray.forEach(b => {
+            if (b.bettor?.toLowerCase() === participant?.toLowerCase()) {
+              resolveBet(b.requestId, { payout, outcomeIndex, isWin });
             }
           });
           if (isWin) {
-            addLog(`${outcomeData.label} — Won ${formatToken(payout, DECIMALS.usdc, 2)} USDC`, 'fortune');
-            setMapPriceTick('up');
-            setTimeout(() => setMapPriceTick(null), 2000);
+            addLog(outcomeData.label, 'win', `+${formatToken(payout, DECIMALS.usdc, 2)} USDC`);
           } else {
-            addLog(`The sea claims its due. ${formatToken(amount, DECIMALS.usdc, 2)} USDC added to the chest.`, 'contribution');
+            addLog("The sea claims its due.", 'loss', `${formatToken(amount, DECIMALS.usdc, 2)} to chest`);
             triggerTreasureGlow();
           }
         }
@@ -656,555 +663,886 @@ export default function App() {
     enabled: readEnabled && !!addresses.mapToken,
     onLogs: (logs) => {
       logs.forEach((lg) => {
-        const { buyer, usdcIn, mapOut } = lg.args || {};
-        logEvent('MapBought', { buyer, usdcIn: usdcIn?.toString(), mapOut: mapOut?.toString() });
+        const { buyer, mapOut } = lg.args || {};
         if (buyer?.toLowerCase() === address?.toLowerCase()) {
-          addLog(`Acquired ${formatToken(mapOut, DECIMALS.map, 3)} MAP for ${formatToken(usdcIn, DECIMALS.usdc, 2)} USDC`, 'map');
+          addLog("MAP acquired", 'map', `+${formatToken(mapOut, DECIMALS.map, 3)} MAP`);
+          triggerMapMessage();
         }
       });
     },
   });
 
-  const mapTier = getMapTier(mapPrice);
   const isBusy = isApprovingUsdc || isApprovingHunt || isPlacingBet || isBuyingMap || isSellingMap || isStaking ||
     isWaitingApproveUsdc || isWaitingApproveHunt || isWaitingBet || isWaitingMap || isWaitingSellMap || isWaitingStake ||
     isInitiatingWithdraw || isCancellingWithdraw || isWithdrawing || isMinting || isWaitingMint;
 
   const formatCooldown = (ms) => {
     if (!ms) return '--';
-    const days = Math.floor(ms / (24 * 60 * 60 * 1000));
-    const hours = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
-    return `${days}d ${hours}h remaining`;
-  };
-
-  const getLogStyle = (type) => {
-    const styles = {
-      discovery: { borderColor: '#c9a227', fontWeight: '600' },
-      fortune: { borderColor: '#2d6b4a' },
-      contribution: { borderColor: '#c97a27' },
-      expedition: { borderColor: '#8b7355' },
-      stake: { borderColor: '#6b5c87' },
-      map: { borderColor: '#5c6b8b' },
-      tx: { borderColor: '#5c5c5c' },
-      error: { borderColor: '#8b3030' },
-      info: { borderColor: '#6b5c47' },
-    };
-    return styles[type] || styles.info;
+    const d = Math.floor(ms / (24 * 60 * 60 * 1000));
+    const h = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+    return `${d}d ${h}h`;
   };
 
   // Demo trigger
-  const triggerDemoDiscovery = useCallback(() => {
+  const triggerDemo = useCallback(() => {
     if (!DEMO_MODE) return;
-    addLog("⚓ TREASURE FOUND! The chest bursts open — the map expands.", 'discovery');
+    addLog("⚓ TREASURE FOUND!", 'discovery', '123.45 USDC');
     triggerDiscovery({ amount: 123_450_000n, epoch: epochId, discoverer: address, isDemo: true });
   }, [addLog, triggerDiscovery, epochId, address]);
 
+  // ==========================================================================
+  // RENDER — Card-based grid layout
+  // ==========================================================================
   return (
     <CartographerNotesContext.Provider value={noteManager}>
-      <CartographerNotesOverlay activeNote={activeNote} position={notePosition} />
-      <div className="min-h-screen p-4 relative overflow-hidden" style={{
+      <CartographerNotesOverlay activeNote={activeNote} anchorRect={noteRect} />
+
+      {/* TREASURE DISCOVERY OVERLAY — Full screen, centered, blocks interaction */}
+      {showDiscovery && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 100000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(0,0,0,0.85)',
+        }}>
+          <div style={{
+            textAlign: 'center',
+            padding: 48,
+            background: 'radial-gradient(circle, #2a2210 0%, #1a1508 100%)',
+            border: '3px solid #c9a227',
+            borderRadius: 12,
+            boxShadow: '0 0 80px rgba(201, 162, 39, 0.5)',
+            animation: 'pulse 1s ease-in-out infinite',
+          }}>
+            <div style={{ fontSize: 64, marginBottom: 16 }}>💰⚓💰</div>
+            <h1 style={{
+              fontFamily: "'Pirata One', cursive",
+              fontSize: 48,
+              color: '#ffd700',
+              textShadow: '0 0 20px rgba(255,215,0,0.8)',
+              margin: 0,
+            }}>
+              TREASURE DISCOVERED!
+            </h1>
+            <p style={{
+              fontFamily: "'IM Fell English', Georgia, serif",
+              fontSize: 24,
+              color: '#f5e6c8',
+              marginTop: 16,
+            }}>
+              {formatToken(discovery?.amount, DECIMALS.usdc, 2)} USDC
+            </p>
+            <p style={{
+              fontFamily: "'IM Fell English', Georgia, serif",
+              fontSize: 16,
+              color: '#8b7355',
+              marginTop: 8,
+              fontStyle: 'italic',
+            }}>
+              The chest has opened. The crew cheers.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* FULL LOG MODAL */}
+      {showFullLog && (
+        <div
+          onClick={() => setShowFullLog(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 90000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.8)',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: 500,
+              maxHeight: '80vh',
+              background: '#f8f4eb',
+              border: '2px solid #c9b896',
+              borderRadius: 8,
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{
+              padding: 16,
+              borderBottom: '1px solid #e8dcc4',
+              background: '#f0e6d2',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}>
+              <span style={{ fontFamily: "'Pirata One', cursive", fontSize: 20, color: '#3d3210' }}>
+                Captain's Log
+              </span>
+              <button
+                onClick={() => setShowFullLog(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: 20,
+                  cursor: 'pointer',
+                  color: '#5c4a32',
+                }}
+              >×</button>
+            </div>
+            <div style={{ padding: 16, maxHeight: 'calc(80vh - 60px)', overflowY: 'auto' }}>
+              {log.length === 0 ? (
+                <p style={{ color: '#8b7355', fontStyle: 'italic', textAlign: 'center' }}>
+                  The pages remain blank...
+                </p>
+              ) : (
+                log.slice().reverse().map((entry, i) => (
+                  <div key={i} style={{
+                    padding: '12px 0',
+                    borderBottom: '1px solid #e8dcc4',
+                  }}>
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      marginBottom: 4,
+                    }}>
+                      <span style={{
+                        fontFamily: "'IM Fell English', Georgia, serif",
+                        fontStyle: 'italic',
+                        color: entry.type === 'discovery' ? '#c9a227' : entry.type === 'win' ? '#2d6b4a' : '#4a3a28',
+                      }}>
+                        {entry.message}
+                      </span>
+                      <span style={{ fontSize: 12, color: '#8b7355' }}>{entry.time}</span>
+                    </div>
+                    {entry.detail && (
+                      <span style={{
+                        fontSize: 14,
+                        color: '#5c4a32',
+                        fontFamily: "'Pirata One', cursive",
+                      }}>
+                        {entry.detail}
+                      </span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{
+        minHeight: '100vh',
         background: 'linear-gradient(180deg, #1a1510 0%, #0f0d0a 100%)',
-        fontFamily: "'IM Fell English', 'Times New Roman', serif",
+        padding: 24,
       }}>
-        {/* Google Fonts & Animations */}
+        {/* Fonts */}
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=Pirata+One&family=IM+Fell+English:ital@0;1&display=swap');
-          .font-pirata { font-family: 'Pirata One', cursive; }
-          .font-fell { font-family: 'IM Fell English', serif; }
-          @keyframes noteSlideDown { 0% { opacity: 0; transform: translateY(-4px); } 100% { opacity: 1; transform: translateY(0); } }
-          @keyframes noteSlideUp { 0% { opacity: 0; transform: translateY(4px); } 100% { opacity: 1; transform: translateY(0); } }
-          @keyframes flicker { 0%, 100% { opacity: 1; } 50% { opacity: 0.8; } }
-          @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-          input[type="number"] { font-family: 'IM Fell English', serif; }
+          @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+          @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+          * { box-sizing: border-box; }
         `}</style>
 
-        {/* Discovery Celebration Overlay */}
-        {showDiscovery && (
-          <div className="pointer-events-none" style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'grid', placeItems: 'center' }}>
-            <div className="absolute inset-0" style={{ background: 'radial-gradient(circle at 50% 50%, rgba(201, 162, 39, 0.5) 0%, rgba(0, 0, 0, 0.6) 70%)', animation: 'flicker 0.5s ease-in-out infinite' }} />
-            <div className="relative text-center px-8 py-6 rounded animate-bounce" style={{
-              background: 'linear-gradient(180deg, rgba(61, 50, 16, 0.95) 0%, rgba(45, 36, 12, 0.95) 100%)',
-              border: '3px solid #c9a227',
-              boxShadow: '0 0 60px rgba(255, 215, 0, 0.4), 0 0 120px rgba(201, 162, 39, 0.2)',
+        {/* HEADER */}
+        <div style={{
+          maxWidth: 1100,
+          margin: '0 auto 24px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          <div>
+            <h1 style={{
+              fontFamily: "'Pirata One', cursive",
+              fontSize: 36,
+              color: '#c9a227',
+              margin: 0,
+              textShadow: '2px 2px 0 #3d3210',
             }}>
-              <div className="font-pirata text-6xl mb-4" style={{ color: '#ffd700', textShadow: '0 0 20px rgba(255, 215, 0, 0.8), 2px 2px 0 #5c4a12' }}>☠ ✦ ⚓</div>
-              <h1 className="font-pirata text-5xl mb-2" style={{ color: '#ffd700', textShadow: '0 0 20px rgba(255, 215, 0, 0.8), 3px 3px 0 #3d3210' }}>TREASURE DISCOVERED!</h1>
-              <p className="font-fell text-xl italic" style={{ color: '#f5e6c8' }}>{formatToken(discovery?.amount, DECIMALS.usdc, 2)} USDC</p>
-            </div>
-          </div>
-        )}
-
-        {/* Full Log Modal */}
-        {showFullLog && (
-          <div className="fixed inset-0 z-50" style={{ background: 'rgba(0, 0, 0, 0.85)' }} onClick={() => setShowFullLog(false)}>
-            <div className="fixed inset-0 flex items-center justify-center p-6" onClick={(e) => e.stopPropagation()}>
-              <div className="relative w-full max-w-2xl max-h-[80vh] overflow-hidden rounded-sm" style={{
-                background: 'linear-gradient(180deg, #f0e6d2 0%, #e8dcc4 30%, #ddd0b8 70%, #d4c4a0 100%)',
-                boxShadow: '0 25px 50px rgba(0,0,0,0.5)',
-                border: '3px solid #8b7355',
-              }}>
-                <div className="p-4 border-b" style={{ borderColor: 'rgba(93, 74, 50, 0.3)' }}>
-                  <div className="flex items-center justify-between">
-                    <h2 className="font-pirata text-2xl" style={{ color: '#3d3210' }}>⚓ Captain's Log — Complete Record</h2>
-                    <button onClick={() => setShowFullLog(false)} className="font-fell text-xl px-3 py-1 rounded hover:opacity-70" style={{ color: '#5c4a32' }}>✕</button>
-                  </div>
-                  <p className="font-fell text-sm italic mt-1" style={{ color: '#6b5c47' }}>Expedition № {epochId?.toString() ?? '--'} — {log.length} entries</p>
-                </div>
-                <div className="overflow-y-auto p-4 font-fell" style={{ maxHeight: 'calc(80vh - 100px)', color: '#3d2818' }}>
-                  {log.length === 0 ? (
-                    <p className="text-center italic py-8" style={{ color: '#6b5c47' }}>The pages remain blank… for now.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {log.slice().reverse().map((entry, i) => (
-                        <div key={i} className="relative pl-4 py-2 border-l-2" style={{ borderColor: getLogStyle(entry.type).borderColor }}>
-                          <span className="text-xs italic block mb-1" style={{ color: '#8b7355' }}>{entry.time}</span>
-                          <span style={{ color: entry.type === 'discovery' ? '#3d3210' : '#4a3828', fontWeight: entry.type === 'discovery' ? '600' : 'normal' }}>{entry.message}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="max-w-5xl mx-auto relative z-10">
-          {/* Header */}
-          <div className="mb-6 pb-4">
-            <div className="flex justify-end items-center gap-3 mb-4">
-              <div className="px-3 py-1.5 rounded flex items-center gap-2" style={{
-                background: isWrongNetwork ? 'linear-gradient(180deg, #5c3030 0%, #4a2020 100%)' : 'linear-gradient(180deg, #1a3a5c 0%, #0f2840 100%)',
-                border: isWrongNetwork ? '1px solid #8b4040' : '1px solid #2a5a8c',
-              }}>
-                {isWrongNetwork ? (
-                  <>
-                    <span style={{ color: '#ff8888' }}>⚠</span>
-                    <span className="font-fell text-sm" style={{ color: '#ffaaaa' }}>Wrong Network</span>
-                    {switchChain && <button onClick={() => switchChain({ chainId: SUPPORTED_CHAIN_ID })} className="ml-1 px-2 py-0.5 rounded text-xs font-fell" style={{ background: '#5c3030', color: '#ffcccc', border: '1px solid #8b4040' }}>Switch</button>}
-                  </>
-                ) : (
-                  <>
-                    <span style={{ color: '#60a5fa' }}>◆</span>
-                    <span className="font-fell text-sm" style={{ color: '#93c5fd' }}>{SUPPORTED_CHAIN_NAME}</span>
-                  </>
-                )}
-              </div>
-              <ConnectButton showBalance={false} chainStatus="none" />
-            </div>
-
-            <div className="text-center">
-              <h1 className="font-pirata text-5xl mb-2" style={{ color: '#c9a227', textShadow: '3px 3px 0 #3d3210, 0 0 20px rgba(201, 162, 39, 0.3)' }}>⚓ TREASURE HUNT ⚓</h1>
-              <p className="font-fell italic" style={{ color: '#8b7355' }}>An Autonomous Economic Game of Discovery</p>
-            </div>
-            <InkDivider />
-          </div>
-
-          {/* Stats Bar */}
-          <div className="grid grid-cols-4 gap-3 mb-6">
-            <BrassPlaque label="Expedition" value={`№ ${epochId?.toString() ?? '--'}`} noteKey="expedition" />
-            <BrassPlaque label="Map Size" value={`$${formatToken(mValue, DECIMALS.usdc, 0)}`} noteKey="mapSize" />
-            <BrassPlaque label="Contributions" value={n0Value?.toString() ?? '--'} noteKey="contributions" />
-            <BrassPlaque label="Your USDC" value={`$${formatToken(userUsdcBalance, DECIMALS.usdc, 2)}`} />
-          </div>
-
-          {/* Faucet Row */}
-          {SUPPORTED_CHAIN_ID === 84532 && (
-            <div className="mb-4 text-center">
-              <WoodButton onClick={handleMintFaucet} disabled={!readEnabled || isBusy} className="px-4 py-2">
-                {isMinting || isWaitingMint ? 'Minting...' : '🪙 Faucet: Mint 1000 Test USDC'}
-              </WoodButton>
-            </div>
-          )}
-
-          {/* Treasure Chest */}
-          <ParchmentPanel className="p-4 mb-6" glow={treasureGlow || showDiscovery}>
-            <div className="flex justify-between mb-2">
-              <span className="font-pirata text-xl" style={{ color: '#3d3210' }}>⚓ The Treasure Chest<CartographerNote noteKey="treasureChest" /></span>
-              <span className="font-pirata text-xl" style={{ color: '#5c4a12' }}>${formatToken(jBalance, DECIMALS.usdc, 2)} / ${formatToken(mValue, DECIMALS.usdc, 0)}</span>
-            </div>
-            <div className="h-8 rounded overflow-hidden relative" style={{ background: '#c9b896', border: '2px solid #8b7355', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)' }}>
-              <div className="h-full transition-all duration-500 flex items-center justify-end pr-2" style={{
-                width: `${Math.min(chestProgress, 100)}%`,
-                background: treasureGlow ? 'linear-gradient(90deg, #ffd700 0%, #ffec8b 50%, #ffd700 100%)' : 'linear-gradient(90deg, #8b6914 0%, #c9a227 50%, #8b6914 100%)',
-                boxShadow: treasureGlow ? '0 0 15px rgba(255, 215, 0, 0.6)' : 'none',
-              }}>
-                {chestProgress > 15 && <span className="font-pirata text-sm" style={{ color: '#3d3210', textShadow: '0 1px 0 rgba(255,255,255,0.3)' }}>{chestProgress.toFixed(1)}%</span>}
-              </div>
-            </div>
-            <p className="font-fell text-sm text-center mt-2 italic" style={{ color: '#6b5c47' }}>
-              {treasureGlow ? "The chest rattles as it fills…" : "The closer we draw, the quieter the sea becomes."}
+              ⚓ TREASURE HUNT
+            </h1>
+            <p style={{
+              fontFamily: "'IM Fell English', Georgia, serif",
+              color: '#8b7355',
+              margin: '4px 0 0',
+              fontStyle: 'italic',
+            }}>
+              An Autonomous Economic Game
             </p>
-          </ParchmentPanel>
-
-          {/* Main Grid: 3 columns */}
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            {/* Left: Exploration */}
-            <ParchmentPanel className="p-4">
-              <h2 className="font-pirata text-xl mb-3 text-center" style={{ color: '#3d3210' }}>🧭 Exploration<CartographerNote noteKey="beginExploration" /></h2>
-              <div className="mb-3">
-                <label className="font-fell text-sm" style={{ color: '#5c4a32' }}>Contribution (USDC)</label>
-                <div className="flex gap-2 mt-1">
-                  <input
-                    type="number"
-                    min="0.10"
-                    step="0.10"
-                    value={betAmount}
-                    onChange={(e) => setBetAmount(e.target.value)}
-                    className="flex-1 rounded p-2"
-                    style={{ background: '#f5e6c8', border: '2px solid #8b7355', color: '#3d3210', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.1)' }}
-                    disabled={!readEnabled || isBusy}
-                    placeholder={`${formatToken(minBet, DECIMALS.usdc, 2)} - ${formatToken(maxBet, DECIMALS.usdc, 2)}`}
-                  />
-                  <button onClick={handleMaxBet} disabled={!readEnabled || isBusy} className="px-2 py-1 rounded font-fell text-xs" style={{ background: 'rgba(92, 74, 50, 0.2)', color: '#5c4a32', border: '1px solid #8b7355' }}>MAX</button>
-                </div>
-                <div className="font-fell text-xs mt-1 italic" style={{ color: '#6b5c47' }}>Every expedition welcomes at least one step.</div>
-              </div>
-              {needsEngineApproval ? (
-                <WoodButton onClick={handleApproveUsdcForEngine} disabled={!readEnabled || isBusy} className="w-full py-3 text-lg">
-                  {isApprovingUsdc || isWaitingApproveUsdc ? '⏳ Approving...' : '🔓 Approve USDC'}
-                </WoodButton>
-              ) : (
-                <WoodButton onClick={handlePlaceBet} disabled={!readEnabled || isBusy || !betAmount} className="w-full py-3 text-lg">
-                  {isPlacingBet || isWaitingBet ? '🧭 The oracle peers into the deep…' : '🧭 Begin Exploration'}
-                </WoodButton>
-              )}
-              {lastOutcome && (
-                <div className="mt-3 p-3 rounded" style={{ background: '#d4c4a8', border: '2px solid #8b7355' }}>
-                  <div className="font-pirata text-center mb-1" style={{ color: '#3d3210' }}>{lastOutcome.label}</div>
-                  <div className="font-fell text-sm italic text-center" style={{ color: '#5c4a32' }}>{lastOutcome.name}</div>
-                </div>
-              )}
-              {DEMO_MODE && (
-                <button onClick={triggerDemoDiscovery} className="w-full mt-3 py-1 rounded font-fell text-xs opacity-50 hover:opacity-100 transition-opacity" style={{ background: 'transparent', color: '#6b5c47', border: '1px dashed #8b7355' }}>[Demo: Trigger Discovery]</button>
-              )}
-            </ParchmentPanel>
-
-            {/* Center: Holdings */}
-            <ParchmentPanel className="p-4">
-              <h2 className="font-pirata text-xl mb-3 text-center" style={{ color: '#3d3210' }}>☠ Holdings</h2>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center p-2 rounded" style={{ background: '#c9b896', border: '1px solid #8b7355' }}>
-                  <span className="font-pirata" style={{ color: '#5c4a32' }}>● Doubloons</span>
-                  <span className="font-pirata text-lg" style={{ color: '#3d3210' }}>${formatToken(userUsdcBalance, DECIMALS.usdc, 2)}</span>
-                </div>
-                <div className="flex justify-between items-center p-2 rounded" style={{ background: '#c9b896', border: '1px solid #8b7355' }}>
-                  <div>
-                    <span className="font-pirata" style={{ color: '#5c4a32' }}>⊕ Yer HUNT<CartographerNote noteKey="huntWallet" /></span>
-                    <div className="font-fell text-xs italic" style={{ color: '#8b7355' }}>Earned through exploration</div>
-                  </div>
-                  <span className="font-pirata" style={{ color: '#3d3210' }}>{formatToken(huntBalance, DECIMALS.hunt, 2)}</span>
-                </div>
-                <div className="flex justify-between items-center p-2 rounded" style={{ background: '#b8a886', border: '1px solid #8b7355' }}>
-                  <span className="font-pirata" style={{ color: '#5c4a32' }}>⚓ HUNT Aboard Ship<CartographerNote noteKey="huntStaked" /></span>
-                  <span className="font-pirata" style={{ color: '#3d3210' }}>{formatToken(stakingData.stakedBalance, DECIMALS.hunt, 2)}</span>
-                </div>
-                <div className="flex justify-between items-center p-2 rounded transition-all duration-500" style={{ background: mapPriceTick ? '#a8c4b8' : '#c9b896', border: mapPriceTick ? '2px solid #5c8b6b' : '1px solid #8b7355' }}>
-                  <span className="font-pirata" style={{ color: '#5c4a32' }}>◇ MAP<CartographerNote noteKey="map" /></span>
-                  <div className="text-right flex items-center gap-2">
-                    <span className="font-pirata" style={{ color: '#3d3210' }}>{formatToken(mapBalance, DECIMALS.map, 2)}</span>
-                    {mapPriceTick === 'up' && <span className="font-pirata text-emerald-700 animate-pulse">▲</span>}
-                  </div>
-                </div>
-              </div>
-            </ParchmentPanel>
-
-            {/* Right: Ship's Hold (Staking) */}
-            <ParchmentPanel className="p-4">
-              <h2 className="font-pirata text-xl mb-3 text-center" style={{ color: '#3d3210' }}>⚓ Ship's Hold<CartographerNote noteKey="huntStaked" /></h2>
-              <p className="font-fell text-sm text-center italic mb-3" style={{ color: '#6b5c47' }}>One exploration per expedition earns a seat at the table.</p>
-
-              <div className="space-y-2 mb-4">
-                <div className="flex justify-between font-fell" style={{ color: '#5c4a32' }}>
-                  <span>Below Deck</span>
-                  <span className="font-pirata" style={{ color: '#3d3210' }}>{formatToken(stakingData.stakedBalance, DECIMALS.hunt, 2)} HUNT</span>
-                </div>
-                <div className="flex justify-between font-fell" style={{ color: '#5c4a32' }}>
-                  <span>Available</span>
-                  <span className="font-pirata" style={{ color: '#3d3210' }}>{formatToken(huntBalance, DECIMALS.hunt, 2)} HUNT</span>
-                </div>
-              </div>
-
-              {/* Cooldown Status */}
-              {stakingData.cooldownStatus?.status === 'active' && (
-                <div className="p-2 rounded mb-3 text-center" style={{ background: '#d4c4a0', border: '2px solid #8b7355' }}>
-                  <div className="font-pirata" style={{ color: '#8b6914' }}>Gangplank Lowering<CartographerNote noteKey="stakingCooldown" /></div>
-                  <div className="font-fell text-xs italic" style={{ color: '#6b5c47' }}>{formatCooldown(stakingData.cooldownStatus.remaining)}</div>
-                </div>
-              )}
-
-              {/* Qualification Status */}
-              <div className="p-2 rounded mb-3 text-center" style={{
-                background: stakingData.isQualified && stakingData.stakedBalance > 0n ? '#a8c4a8' : '#d4c4a0',
-                border: stakingData.isQualified && stakingData.stakedBalance > 0n ? '2px solid #5c8b5c' : '1px solid #8b7355',
-              }}>
-                {stakingData.isQualified && stakingData.stakedBalance > 0n ? (
-                  <span className="font-fell italic" style={{ color: '#2d4a2d' }}>✓ Seat earned for this expedition</span>
-                ) : stakingData.stakedBalance > 0n ? (
-                  <span className="font-fell italic" style={{ color: '#6b5c47' }}>Explore once to earn a seat</span>
-                ) : (
-                  <span className="font-fell italic" style={{ color: '#6b5c47' }}>Stow HUNT to join the crew's share</span>
-                )}
-              </div>
-
-              {/* Stake Input */}
-              {huntBalance > 0n && !stakingData.cooldownStatus?.status && (
-                <div className="mb-3">
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      min="0"
-                      value={stakeAmount}
-                      onChange={(e) => setStakeAmount(e.target.value)}
-                      placeholder="Amount to stow"
-                      className="flex-1 rounded p-2 text-sm"
-                      style={{ background: '#f5e6c8', border: '2px solid #8b7355', color: '#3d3210', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.1)' }}
-                      disabled={!readEnabled || isBusy}
-                    />
-                    <button onClick={handleMaxStake} disabled={!readEnabled || isBusy} className="px-2 py-1 rounded font-fell text-xs" style={{ background: 'rgba(92, 74, 50, 0.2)', color: '#5c4a32', border: '1px solid #8b7355' }}>MAX</button>
-                  </div>
-                  {needsStakingApproval ? (
-                    <WoodButton onClick={handleApproveHuntForStaking} disabled={!readEnabled || isBusy} className="w-full mt-2 py-2">
-                      {isApprovingHunt || isWaitingApproveHunt ? 'Approving...' : 'Approve HUNT'}
-                    </WoodButton>
-                  ) : (
-                    <WoodButton onClick={handleStake} disabled={!readEnabled || isBusy || !stakeAmount} className="w-full mt-2 py-2">
-                      {isStaking || isWaitingStake ? 'Stowing...' : 'Stow HUNT Below Deck'}
-                    </WoodButton>
-                  )}
-                </div>
-              )}
-
-              {/* Withdraw Controls */}
-              {stakingData.stakedBalance > 0n && stakingData.cooldownStatus?.status === 'none' && (
-                <WoodButton onClick={handleInitiateWithdraw} variant="secondary" disabled={isBusy} className="w-full py-2">Prepare to Disembark</WoodButton>
-              )}
-              {stakingData.cooldownStatus?.status === 'active' && (
-                <WoodButton onClick={handleCancelWithdraw} variant="secondary" disabled={isBusy} className="w-full py-2">Cancel Disembarkation</WoodButton>
-              )}
-              {stakingData.cooldownStatus?.status === 'ready' && (
-                <WoodButton onClick={handleWithdraw} disabled={isBusy} className="w-full py-2">Complete Withdrawal</WoodButton>
-              )}
-            </ParchmentPanel>
           </div>
-
-          {/* The Cartographer's Map */}
-          <div className="relative mb-6 overflow-hidden" style={{
-            borderRadius: '6px',
-            border: '3px solid #5c4a32',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-            minHeight: '220px',
-          }}>
-            <div className="absolute inset-0" style={{
-              background: 'linear-gradient(135deg, #c9a86c 0%, #d4b87a 15%, #c19a5a 30%, #d8c088 45%, #b8944c 60%, #c9a86c 75%, #d4b87a 90%, #b89050 100%)',
-            }} />
-            <div className="absolute inset-0" style={{
-              background: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-              opacity: 0.12,
-              mixBlendMode: 'multiply',
-            }} />
-            <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse at center, transparent 40%, rgba(60, 40, 20, 0.4) 100%)' }} />
-
-            <div className="relative z-10 p-4">
-              <div className="flex items-center justify-between mb-4">
-                <div className="relative px-4 py-2" style={{
-                  background: 'linear-gradient(180deg, rgba(232, 220, 196, 0.92) 0%, rgba(212, 196, 160, 0.88) 100%)',
-                  border: '1px solid #8b7355',
-                  borderRadius: '3px',
-                  boxShadow: '2px 3px 6px rgba(0,0,0,0.3)',
-                }}>
-                  <div className="absolute -top-1 left-3 w-2 h-2 rounded-full" style={{ background: 'radial-gradient(circle at 30% 30%, #d4a840 0%, #8b6914 100%)', boxShadow: '0 1px 2px rgba(0,0,0,0.4)' }} />
-                  <h2 className="font-pirata text-xl flex items-center gap-2" style={{ color: '#3d3210' }}>
-                    ◇ The Cartographer's Map<CartographerNote noteKey="map" />
-                    {mapPriceTick === 'up' && <span className="text-emerald-700 animate-pulse">▲</span>}
-                  </h2>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-4 gap-3">
-                {[
-                  { label: 'Yer MAP', value: formatToken(mapBalance, DECIMALS.map, 2), noteKey: 'map' },
-                  { label: 'Price', value: `$${formatToken(mapPrice, DECIMALS.usdc, 4)}`, tick: mapPriceTick, noteKey: 'mapPrice' },
-                  { label: 'Total Supply', value: formatToken(mapSupply, DECIMALS.map, 0), noteKey: 'mapSupply' },
-                  { label: 'Map State', value: mapTier.name, icon: mapTier.icon, noteKey: 'mapState' },
-                ].map((item, i) => (
-                  <div key={i} className="relative p-3 text-center" style={{
-                    background: 'linear-gradient(180deg, rgba(240, 232, 216, 0.9) 0%, rgba(220, 208, 184, 0.85) 100%)',
-                    border: '1px solid #a08060',
-                    borderRadius: '3px',
-                    boxShadow: '2px 3px 8px rgba(0,0,0,0.25)',
-                    transform: `rotate(${(i % 2 === 0 ? -0.5 : 0.5)}deg)`,
-                  }}>
-                    <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full" style={{
-                      background: 'radial-gradient(circle at 30% 30%, #e8c860 0%, #a08020 60%, #705810 100%)',
-                      boxShadow: '0 1px 2px rgba(0,0,0,0.4)',
-                      border: '1px solid #6b5010',
-                    }} />
-                    <div className="font-fell text-xs" style={{ color: '#6b5c47' }}>{item.label}{item.noteKey && <CartographerNote noteKey={item.noteKey} />}</div>
-                    <div className="font-pirata text-lg flex items-center justify-center gap-1 mt-1" style={{ color: '#3d3210' }}>
-                      {item.icon && <span className="mr-1">{item.icon}</span>}
-                      {item.value}
-                      {item.tick === 'up' && <span className="text-emerald-700 text-sm">▲</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* MAP Buy/Sell Section */}
-            <div className="relative border-t" style={{ borderColor: 'rgba(92, 74, 50, 0.4)' }}>
-              <div className="relative z-10 p-4">
-                <div className="relative max-w-md mx-auto" style={{
-                  background: 'linear-gradient(180deg, rgba(240, 232, 216, 0.95) 0%, rgba(220, 208, 184, 0.92) 100%)',
-                  border: '1px solid #a08060',
-                  borderRadius: '4px',
-                  boxShadow: '3px 4px 12px rgba(0,0,0,0.25)',
-                  overflow: 'hidden',
-                }}>
-                  <div className="flex border-b" style={{ borderColor: 'rgba(92, 74, 50, 0.3)' }}>
-                    <button onClick={() => setMapTradeMode('buy')} className="flex-1 py-3 font-pirata text-lg transition-all" style={{
-                      background: mapTradeMode === 'buy' ? 'rgba(92, 74, 50, 0.15)' : 'transparent',
-                      color: mapTradeMode === 'buy' ? '#3d3210' : '#8b7355',
-                      borderBottom: mapTradeMode === 'buy' ? '2px solid #5c4a32' : '2px solid transparent',
-                    }}>Acquire</button>
-                    <button onClick={() => setMapTradeMode('sell')} className="flex-1 py-3 font-pirata text-lg transition-all" style={{
-                      background: mapTradeMode === 'sell' ? 'rgba(139, 34, 34, 0.1)' : 'transparent',
-                      color: mapTradeMode === 'sell' ? '#6b3030' : '#8b7355',
-                      borderBottom: mapTradeMode === 'sell' ? '2px solid #8b4040' : '2px solid transparent',
-                    }}>Return</button>
-                  </div>
-
-                  <div className="p-5">
-                    <div className="text-center mb-4">
-                      <p className="font-fell text-xs italic" style={{ color: '#6b5c47' }}>Current price: ${formatToken(mapPrice, DECIMALS.usdc, 4)} per MAP</p>
-                    </div>
-
-                    {mapTradeMode === 'buy' && (
-                      <>
-                        <div className="flex gap-2 mb-2">
-                          {[25, 50, 75].map(pct => (
-                            <button key={pct} onClick={() => {
-                              if (userUsdcBalance) setMapBuyAmount(formatUnits(userUsdcBalance * BigInt(pct) / 100n, DECIMALS.usdc));
-                            }} className="flex-1 py-1 rounded font-fell text-xs" style={{ background: 'rgba(92, 74, 50, 0.1)', color: '#5c4a32', border: '1px solid rgba(92, 74, 50, 0.3)' }}>{pct}%</button>
-                          ))}
-                          <button onClick={handleMaxMapBuy} className="flex-1 py-1 rounded font-fell text-xs font-medium" style={{ background: 'rgba(92, 74, 50, 0.15)', color: '#5c4a32', border: '1px solid rgba(92, 74, 50, 0.4)' }}>MAX</button>
-                        </div>
-                        <input type="number" min="0.01" step="0.01" value={mapBuyAmount} onChange={(e) => setMapBuyAmount(e.target.value)} placeholder="USDC amount" disabled={!readEnabled || isBusy} className="w-full rounded p-3 font-fell text-lg text-center mb-2" style={{ background: '#faf6f0', border: '1px solid #a08060', color: '#3d3210' }} />
-                        <div className="flex justify-between mb-3 font-fell text-xs" style={{ color: '#6b5c47' }}>
-                          <span>Available: ${formatToken(userUsdcBalance, DECIMALS.usdc, 2)}</span>
-                        </div>
-                        {needsMapApproval ? (
-                          <button onClick={handleApproveUsdcForMap} disabled={!readEnabled || isBusy} className="w-full py-3 rounded font-fell transition-opacity" style={{ background: '#5c4a32', color: '#f5ece0' }}>
-                            {isApprovingUsdc || isWaitingApproveUsdc ? 'Approving...' : 'Approve USDC'}
-                          </button>
-                        ) : (
-                          <button onClick={handleBuyMap} disabled={!readEnabled || isBusy || !mapBuyAmount} className="w-full py-3 rounded font-fell transition-opacity" style={{ background: isBusy ? '#8b7355' : '#5c4a32', color: '#f5ece0', opacity: !mapBuyAmount ? 0.5 : 1, cursor: (!mapBuyAmount || isBusy) ? 'not-allowed' : 'pointer' }}>
-                            {isBuyingMap || isWaitingMap ? 'Confirming...' : 'Acquire MAP'}
-                          </button>
-                        )}
-                      </>
-                    )}
-
-                    {mapTradeMode === 'sell' && (
-                      <>
-                        <div className="flex gap-2 mb-2">
-                          {[25, 50, 75].map(pct => (
-                            <button key={pct} onClick={() => {
-                              if (mapBalance) setMapSellAmount(formatUnits(mapBalance * BigInt(pct) / 100n, DECIMALS.map));
-                            }} className="flex-1 py-1 rounded font-fell text-xs" style={{ background: 'rgba(139, 34, 34, 0.08)', color: '#6b3030', border: '1px solid rgba(139, 34, 34, 0.2)' }}>{pct}%</button>
-                          ))}
-                          <button onClick={handleMaxMapSell} className="flex-1 py-1 rounded font-fell text-xs font-medium" style={{ background: 'rgba(139, 34, 34, 0.12)', color: '#6b3030', border: '1px solid rgba(139, 34, 34, 0.3)' }}>MAX</button>
-                        </div>
-                        <input type="number" min="0.0001" step="0.0001" value={mapSellAmount} onChange={(e) => setMapSellAmount(e.target.value)} placeholder="MAP amount" disabled={!readEnabled || isBusy} className="w-full rounded p-3 font-fell text-lg text-center mb-2" style={{ background: '#faf6f0', border: '1px solid #a08060', color: '#3d3210' }} />
-                        <div className="flex justify-between mb-3 font-fell text-xs" style={{ color: '#6b5c47' }}>
-                          <span>Your MAP: {formatToken(mapBalance, DECIMALS.map, 4)}</span>
-                        </div>
-                        <button onClick={handleSellMap} disabled={!readEnabled || isBusy || !mapSellAmount} className="w-full py-3 rounded font-fell transition-opacity" style={{ background: isBusy ? '#8b5555' : '#8b4040', color: '#f5ece0', opacity: !mapSellAmount ? 0.5 : 1, cursor: (!mapSellAmount || isBusy) ? 'not-allowed' : 'pointer' }}>
-                          {isSellingMap || isWaitingSellMap ? 'Confirming...' : 'Return MAP to the Sea'}
-                        </button>
-                        <p className="font-fell text-xs italic text-center mt-3" style={{ color: '#8b5c47' }}>Returning MAP burns it from the supply.</p>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* The Tides of Fortune */}
-          <ParchmentPanel className="p-4 mb-6">
-            <h2 className="font-pirata text-xl mb-3 text-center" style={{ color: '#3d3210' }}>⚓ The Tides of Fortune ⚓<CartographerNote noteKey="tidesOfFortune" /></h2>
-            <div className="grid grid-cols-7 gap-2 text-center">
-              {outcomes.map((o, i) => (
-                <div key={i} className={`relative p-2 ${lastOutcome?.name === o.name ? 'ring-2 ring-amber-400' : ''}`} style={{
-                  background: o.multiplier === 0 ? 'linear-gradient(180deg, rgba(196, 154, 154, 0.92) 0%, rgba(180, 140, 140, 0.88) 100%)'
-                    : o.multiplier < 1 ? 'linear-gradient(180deg, rgba(196, 184, 154, 0.92) 0%, rgba(180, 168, 140, 0.88) 100%)'
-                    : o.multiplier === 1 ? 'linear-gradient(180deg, rgba(201, 184, 150, 0.92) 0%, rgba(185, 168, 135, 0.88) 100%)'
-                    : 'linear-gradient(180deg, rgba(154, 196, 168, 0.92) 0%, rgba(140, 180, 155, 0.88) 100%)',
-                  border: '1px solid #8b7355',
-                  borderRadius: '3px',
-                  boxShadow: '1px 2px 4px rgba(0,0,0,0.3)',
-                }}>
-                  <div className="font-pirata text-lg" style={{ color: '#3d3210' }}>{o.name}</div>
-                  <div className="font-fell text-xs" style={{ color: '#5c4a32' }}>{(o.probability * 100).toFixed(0)}%</div>
-                </div>
-              ))}
-            </div>
-          </ParchmentPanel>
-
-          {/* Captain's Log */}
-          <ParchmentPanel className="p-4 mb-6">
-            <div className="flex items-center justify-between border-b pb-2 mb-3" style={{ borderColor: 'rgba(93, 74, 50, 0.3)' }}>
-              <span className="font-pirata text-lg" style={{ color: '#4a3828' }}>Captain's Log<CartographerNote noteKey="captainsLog" /></span>
-              <div className="flex items-center gap-3">
-                <button onClick={() => setShowFullLog(true)} className="font-fell text-xs px-2 py-1 rounded transition-all hover:opacity-80" style={{
-                  color: '#5c4a32',
-                  background: 'linear-gradient(180deg, rgba(139, 115, 85, 0.15) 0%, rgba(93, 74, 50, 0.25) 100%)',
-                  border: '1px solid rgba(93, 74, 50, 0.3)',
-                }}>View Full Log</button>
-                <span className="font-fell text-xs italic" style={{ color: '#6b5c47' }}>Expedition № {epochId?.toString() ?? '--'}</span>
-              </div>
-            </div>
-            <div className="font-fell text-sm leading-relaxed" style={{ color: '#3d2818', maxHeight: '200px', overflowY: 'auto' }}>
-              {log.length === 0 ? (
-                <p className="italic text-center py-4" style={{ color: '#6b5c47' }}>The sea is calm… for now.</p>
-              ) : (
-                <div className="space-y-2">
-                  {log.slice(-5).reverse().map((entry, i) => (
-                    <div key={i} className="relative pl-3 py-1 border-l-2" style={{ borderColor: getLogStyle(entry.type).borderColor }}>
-                      <span className="italic text-xs opacity-60 mr-2" style={{ color: '#6b5c47' }}>{entry.time}</span>
-                      <span style={{ color: entry.type === 'discovery' ? '#3d3210' : '#4a3828', fontWeight: getLogStyle(entry.type).fontWeight || 'normal' }}>{entry.message}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </ParchmentPanel>
-
-          {/* Footer */}
-          <div className="text-center mt-8">
-            <InkDivider />
-            <p className="font-pirata text-lg" style={{ color: '#5c4a32' }}>The chest resets. The map expands. The expedition continues.</p>
-            <p className="font-fell text-sm italic mt-2" style={{ color: '#3d3210' }}>Treasure Hunt — Live on {SUPPORTED_CHAIN_NAME}</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {isWrongNetwork && (
+              <span style={{ color: '#ff6b6b', fontSize: 14 }}>Wrong Network</span>
+            )}
+            <ConnectButton showBalance={false} chainStatus="icon" />
           </div>
         </div>
 
-        {/* Connection Gate */}
-        {!DEMO_MODE && (!isConnected || isWrongNetwork || !configReady || !walletConnectProjectId) && (
-          <div className="fixed inset-0 z-40 flex items-center justify-center" style={{ background: 'rgba(15, 13, 10, 0.95)' }}>
-            <ParchmentPanel className="p-8 max-w-md text-center">
-              <h3 className="font-pirata text-2xl mb-4" style={{ color: '#3d3210' }}>⚓ Connect to Continue</h3>
-              <p className="font-fell mb-4" style={{ color: '#5c4a32' }}>The expedition awaits a wallet on {SUPPORTED_CHAIN_NAME}.</p>
-              {isWrongNetwork && <p className="font-fell text-sm mb-4" style={{ color: '#8b3030' }}>Wrong network detected.</p>}
-              <div className="flex justify-center gap-3">
-                <ConnectButton showBalance={false} chainStatus="icon" />
-                {isWrongNetwork && switchChain && (
-                  <WoodButton onClick={() => switchChain({ chainId: SUPPORTED_CHAIN_ID })} className="px-4 py-2">Switch Network</WoodButton>
+        {/* MAIN CONTENT */}
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+
+          {/* EXPEDITION STATE — 4 small stat cards */}
+          <div style={{
+            display: 'flex',
+            gap: CARD_GAP,
+            marginBottom: 24,
+            flexWrap: 'wrap',
+          }}>
+            <StatCard label="Expedition" value={`#${epochId?.toString() ?? '--'}`} noteKey="expedition" />
+            <StatCard label="Map Size (M)" value={`$${formatToken(mValue, DECIMALS.usdc, 0)}`} noteKey="mapSize" />
+            <StatCard label="Contributions" value={n0Value?.toString() ?? '--'} noteKey="contributions" />
+            <StatCard label="Emission Rate" value={n0Value ? `${(1 / (1 + Number(n0Value) / 100000) * 100).toFixed(0)}%` : '--'} noteKey="emissionRate" />
+          </div>
+
+          {/* TREASURE CHEST CARD */}
+          <Card
+            title="⚓ The Treasure Chest"
+            noteKey="treasureChest"
+            width="100%"
+            glow={treasureGlow}
+            style={{ marginBottom: 24, maxWidth: 700 }}
+          >
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              marginBottom: 12,
+              fontFamily: "'Pirata One', cursive",
+              fontSize: 20,
+              color: '#3d3210',
+            }}>
+              <span>${formatToken(jBalance, DECIMALS.usdc, 2)}</span>
+              <span style={{ color: '#8b7355' }}>/ ${formatToken(mValue, DECIMALS.usdc, 0)}</span>
+            </div>
+            <div style={{
+              height: 24,
+              background: '#e8dcc4',
+              borderRadius: 12,
+              overflow: 'hidden',
+              border: '1px solid #c9b896',
+            }}>
+              <div style={{
+                height: '100%',
+                width: `${chestProgress}%`,
+                background: treasureGlow
+                  ? 'linear-gradient(90deg, #ffd700, #ffec8b, #ffd700)'
+                  : 'linear-gradient(90deg, #8b6914, #c9a227, #8b6914)',
+                borderRadius: 12,
+                transition: 'width 0.5s, background 0.3s',
+                boxShadow: treasureGlow ? '0 0 10px rgba(255,215,0,0.5)' : 'none',
+              }} />
+            </div>
+            <p style={{
+              fontFamily: "'IM Fell English', Georgia, serif",
+              fontStyle: 'italic',
+              color: '#6b5c47',
+              fontSize: 14,
+              marginTop: 12,
+              textAlign: 'center',
+            }}>
+              {treasureGlow ? "The chest rattles as it fills…" : "The closer we draw, the quieter the sea."}
+            </p>
+          </Card>
+
+          {/* MAIN CARDS GRID — Exploration, Holdings, Ship's Hold */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(3, ${CARD_WIDTH}px)`,
+            gap: CARD_GAP,
+            marginBottom: 24,
+          }}>
+
+            {/* EXPLORATION CARD */}
+            <Card title="🧭 Exploration" noteKey="beginExploration">
+              <div style={{ marginBottom: 16 }}>
+                <label style={{
+                  display: 'block',
+                  fontSize: 13,
+                  color: '#6b5c47',
+                  marginBottom: 6,
+                  fontFamily: "'IM Fell English', Georgia, serif",
+                }}>
+                  Contribution (USDC)
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Input
+                    value={betAmount}
+                    onChange={e => setBetAmount(e.target.value)}
+                    placeholder={`${formatToken(minBet, DECIMALS.usdc, 2)} - ${formatToken(maxBet, DECIMALS.usdc, 2)}`}
+                    disabled={!readEnabled || isBusy}
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    onClick={handleMaxBet}
+                    disabled={!readEnabled || isBusy}
+                    style={{
+                      padding: '8px 12px',
+                      background: '#e8dcc4',
+                      border: '1px solid #c9b896',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      color: '#5c4a32',
+                    }}
+                  >MAX</button>
+                </div>
+              </div>
+
+              {needsEngineApproval ? (
+                <Btn onClick={handleApproveUsdcForEngine} disabled={!readEnabled || isBusy}>
+                  {isApprovingUsdc || isWaitingApproveUsdc ? 'Approving...' : 'Approve USDC'}
+                </Btn>
+              ) : (
+                <Btn onClick={handlePlaceBet} disabled={!readEnabled || isBusy || !betAmount}>
+                  {isPlacingBet || isWaitingBet ? 'Exploring...' : 'Begin Exploration'}
+                </Btn>
+              )}
+
+              {lastOutcome && (
+                <div style={{
+                  marginTop: 16,
+                  padding: 12,
+                  background: '#f0e6d2',
+                  borderRadius: 6,
+                  textAlign: 'center',
+                }}>
+                  <div style={{ fontFamily: "'Pirata One', cursive", color: '#3d3210', fontSize: 18 }}>
+                    {lastOutcome.name}
+                  </div>
+                  <div style={{ fontFamily: "'IM Fell English', Georgia, serif", fontStyle: 'italic', color: '#5c4a32', fontSize: 13 }}>
+                    {lastOutcome.label}
+                  </div>
+                </div>
+              )}
+
+              {DEMO_MODE && (
+                <button
+                  onClick={triggerDemo}
+                  style={{
+                    marginTop: 12,
+                    width: '100%',
+                    padding: 8,
+                    background: 'transparent',
+                    border: '1px dashed #8b7355',
+                    borderRadius: 4,
+                    fontSize: 12,
+                    color: '#8b7355',
+                    cursor: 'pointer',
+                  }}
+                >
+                  [Demo: Trigger Discovery]
+                </button>
+              )}
+
+              {SUPPORTED_CHAIN_ID === 84532 && (
+                <button
+                  onClick={handleMintFaucet}
+                  disabled={!readEnabled || isBusy}
+                  style={{
+                    marginTop: 12,
+                    width: '100%',
+                    padding: 8,
+                    background: '#e8dcc4',
+                    border: '1px solid #c9b896',
+                    borderRadius: 4,
+                    fontSize: 12,
+                    color: '#5c4a32',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {isMinting || isWaitingMint ? 'Minting...' : '🪙 Faucet: 1000 USDC'}
+                </button>
+              )}
+            </Card>
+
+            {/* HOLDINGS CARD */}
+            <Card title="☠ Holdings">
+              <CardRow label="● Doubloons" value={`$${formatToken(userUsdcBalance, DECIMALS.usdc, 2)}`} highlight />
+              <CardRow label="⊕ HUNT" value={formatToken(huntBalance, DECIMALS.hunt, 2)} noteKey="huntWallet" />
+              <CardRow label="⚓ Staked HUNT" value={formatToken(stakingData.stakedBalance, DECIMALS.hunt, 2)} noteKey="huntStaked" />
+              <CardRow label="◇ MAP" value={formatToken(mapBalance, DECIMALS.map, 2)} noteKey="map" />
+            </Card>
+
+            {/* SHIP'S HOLD (STAKING) CARD */}
+            <Card title="⚓ Ship's Hold" noteKey="huntStaked">
+              <p style={{
+                fontFamily: "'IM Fell English', Georgia, serif",
+                fontStyle: 'italic',
+                color: '#6b5c47',
+                fontSize: 13,
+                marginBottom: 16,
+              }}>
+                Stake HUNT to share in discoveries.
+              </p>
+
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#5c4a32', marginBottom: 4 }}>
+                  <span>Below Deck</span>
+                  <span style={{ fontFamily: "'Pirata One', cursive" }}>{formatToken(stakingData.stakedBalance, DECIMALS.hunt, 2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#5c4a32' }}>
+                  <span>Available</span>
+                  <span style={{ fontFamily: "'Pirata One', cursive" }}>{formatToken(huntBalance, DECIMALS.hunt, 2)}</span>
+                </div>
+              </div>
+
+              {/* Cooldown status */}
+              {stakingData.cooldownStatus?.status === 'active' && (
+                <div style={{
+                  padding: 10,
+                  background: '#f0e6d2',
+                  borderRadius: 6,
+                  marginBottom: 12,
+                  textAlign: 'center',
+                }}>
+                  <div style={{ fontSize: 13, color: '#8b6914' }}>
+                    Cooldown: {formatCooldown(stakingData.cooldownStatus.remaining)}
+                    <NoteIcon noteKey="stakingCooldown" />
+                  </div>
+                </div>
+              )}
+
+              {/* Qualification status */}
+              <div style={{
+                padding: 10,
+                background: stakingData.isQualified && stakingData.stakedBalance > 0n ? '#e8f5e8' : '#f0e6d2',
+                borderRadius: 6,
+                marginBottom: 12,
+                textAlign: 'center',
+                fontSize: 13,
+                color: stakingData.isQualified && stakingData.stakedBalance > 0n ? '#2d6b4a' : '#6b5c47',
+                fontStyle: 'italic',
+              }}>
+                {stakingData.isQualified && stakingData.stakedBalance > 0n
+                  ? '✓ Qualified for this expedition'
+                  : stakingData.stakedBalance > 0n
+                    ? 'Explore once to qualify'
+                    : 'Stake HUNT to join the crew'}
+              </div>
+
+              {/* Stake input */}
+              {huntBalance > 0n && !stakingData.cooldownStatus?.status && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <Input
+                      value={stakeAmount}
+                      onChange={e => setStakeAmount(e.target.value)}
+                      placeholder="Amount"
+                      disabled={!readEnabled || isBusy}
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      onClick={handleMaxStake}
+                      disabled={!readEnabled || isBusy}
+                      style={{
+                        padding: '8px 12px',
+                        background: '#e8dcc4',
+                        border: '1px solid #c9b896',
+                        borderRadius: 6,
+                        fontSize: 12,
+                        cursor: 'pointer',
+                        color: '#5c4a32',
+                      }}
+                    >MAX</button>
+                  </div>
+                  {needsStakingApproval ? (
+                    <Btn onClick={handleApproveHuntForStaking} disabled={!readEnabled || isBusy}>
+                      {isApprovingHunt || isWaitingApproveHunt ? 'Approving...' : 'Approve HUNT'}
+                    </Btn>
+                  ) : (
+                    <Btn onClick={handleStake} disabled={!readEnabled || isBusy || !stakeAmount}>
+                      {isStaking || isWaitingStake ? 'Staking...' : 'Stake'}
+                    </Btn>
+                  )}
+                </div>
+              )}
+
+              {/* Withdraw controls */}
+              {stakingData.stakedBalance > 0n && stakingData.cooldownStatus?.status === 'none' && (
+                <Btn onClick={handleInitiateWithdraw} disabled={isBusy} variant="secondary">
+                  Start Withdrawal
+                </Btn>
+              )}
+              {stakingData.cooldownStatus?.status === 'active' && (
+                <Btn onClick={handleCancelWithdraw} disabled={isBusy} variant="secondary">
+                  Cancel
+                </Btn>
+              )}
+              {stakingData.cooldownStatus?.status === 'ready' && (
+                <Btn onClick={handleWithdraw} disabled={isBusy}>
+                  Withdraw
+                </Btn>
+              )}
+            </Card>
+          </div>
+
+          {/* CARTOGRAPHER'S MAP — Parchment background with pinned stat cards */}
+          <div style={{
+            position: 'relative',
+            marginBottom: 24,
+            padding: 24,
+            borderRadius: 8,
+            overflow: 'hidden',
+            // Parchment map background
+            background: `
+              linear-gradient(135deg, #c9a86c 0%, #d4b87a 20%, #c19a5a 40%, #d8c088 60%, #b8944c 80%, #c9a86c 100%)
+            `,
+            border: '2px solid #8b7355',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+          }}>
+            {/* Texture overlay */}
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+              opacity: 0.1,
+              pointerEvents: 'none',
+            }} />
+
+            {/* Title */}
+            <div style={{
+              display: 'inline-block',
+              padding: '8px 16px',
+              background: '#f5efe0',
+              border: '1px solid #c9b896',
+              borderRadius: 4,
+              marginBottom: 16,
+            }}>
+              <span style={{
+                fontFamily: "'Pirata One', cursive",
+                fontSize: 20,
+                color: '#3d3210',
+              }}>
+                ◇ The Cartographer's Map
+                <NoteIcon noteKey="map" />
+              </span>
+            </div>
+
+            {/* Map message */}
+            {mapMessage && (
+              <div style={{
+                position: 'absolute',
+                top: 16,
+                right: 16,
+                padding: '8px 12px',
+                background: '#f5efe0',
+                border: '1px solid #c9b896',
+                borderRadius: 4,
+                fontFamily: "'IM Fell English', Georgia, serif",
+                fontStyle: 'italic',
+                color: '#5c4a32',
+                animation: 'fadeIn 0.3s',
+              }}>
+                {mapMessage}
+              </div>
+            )}
+
+            {/* Stat cards pinned on map */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: 12,
+              marginBottom: 20,
+            }}>
+              {[
+                { label: 'Your MAP', value: formatToken(mapBalance, DECIMALS.map, 2), noteKey: 'map' },
+                { label: 'Price', value: `$${formatToken(mapPrice, DECIMALS.usdc, 4)}`, noteKey: 'mapPrice' },
+                { label: 'Supply', value: formatToken(mapSupply, DECIMALS.map, 0), noteKey: 'mapSupply' },
+                { label: 'Map State', value: `${mapTier.icon} ${mapTier.name}`, noteKey: 'mapState' },
+              ].map((item, i) => (
+                <div key={i} style={{
+                  background: '#f8f4eb',
+                  border: '1px solid #c9b896',
+                  borderRadius: 4,
+                  padding: 12,
+                  textAlign: 'center',
+                  boxShadow: '2px 2px 4px rgba(0,0,0,0.1)',
+                  transform: `rotate(${i % 2 === 0 ? -0.5 : 0.5}deg)`,
+                }}>
+                  <div style={{ fontSize: 12, color: '#6b5c47', marginBottom: 4 }}>
+                    {item.label}
+                    {item.noteKey && <NoteIcon noteKey={item.noteKey} />}
+                  </div>
+                  <div style={{ fontFamily: "'Pirata One', cursive", fontSize: 16, color: '#3d3210' }}>
+                    {item.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Buy/Sell toggle and form */}
+            <div style={{
+              background: '#f8f4eb',
+              border: '1px solid #c9b896',
+              borderRadius: 6,
+              overflow: 'hidden',
+              maxWidth: 400,
+              margin: '0 auto',
+            }}>
+              <div style={{ display: 'flex', borderBottom: '1px solid #e8dcc4' }}>
+                <button
+                  onClick={() => setMapTradeMode('buy')}
+                  style={{
+                    flex: 1,
+                    padding: 12,
+                    background: mapTradeMode === 'buy' ? '#f0e6d2' : 'transparent',
+                    border: 'none',
+                    borderBottom: mapTradeMode === 'buy' ? '2px solid #5c4a32' : '2px solid transparent',
+                    fontFamily: "'Pirata One', cursive",
+                    fontSize: 16,
+                    color: mapTradeMode === 'buy' ? '#3d3210' : '#8b7355',
+                    cursor: 'pointer',
+                  }}
+                >Acquire</button>
+                <button
+                  onClick={() => setMapTradeMode('sell')}
+                  style={{
+                    flex: 1,
+                    padding: 12,
+                    background: mapTradeMode === 'sell' ? '#f0e6d2' : 'transparent',
+                    border: 'none',
+                    borderBottom: mapTradeMode === 'sell' ? '2px solid #8b4040' : '2px solid transparent',
+                    fontFamily: "'Pirata One', cursive",
+                    fontSize: 16,
+                    color: mapTradeMode === 'sell' ? '#6b3030' : '#8b7355',
+                    cursor: 'pointer',
+                  }}
+                >Return</button>
+              </div>
+              <div style={{ padding: 16 }}>
+                {mapTradeMode === 'buy' ? (
+                  <>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                      {[25, 50, 75, 100].map(pct => (
+                        <button
+                          key={pct}
+                          onClick={() => userUsdcBalance && setMapBuyAmount(formatUnits(userUsdcBalance * BigInt(pct) / 100n, DECIMALS.usdc))}
+                          style={{
+                            flex: 1,
+                            padding: 6,
+                            background: '#e8dcc4',
+                            border: '1px solid #c9b896',
+                            borderRadius: 4,
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            color: '#5c4a32',
+                          }}
+                        >{pct === 100 ? 'MAX' : `${pct}%`}</button>
+                      ))}
+                    </div>
+                    <Input
+                      value={mapBuyAmount}
+                      onChange={e => setMapBuyAmount(e.target.value)}
+                      placeholder="USDC amount"
+                      disabled={!readEnabled || isBusy}
+                      style={{ marginBottom: 8 }}
+                    />
+                    <div style={{ fontSize: 12, color: '#6b5c47', marginBottom: 12 }}>
+                      Balance: ${formatToken(userUsdcBalance, DECIMALS.usdc, 2)}
+                    </div>
+                    {needsMapApproval ? (
+                      <Btn onClick={handleApproveUsdcForMap} disabled={!readEnabled || isBusy}>
+                        {isApprovingUsdc || isWaitingApproveUsdc ? 'Approving...' : 'Approve'}
+                      </Btn>
+                    ) : (
+                      <Btn onClick={handleBuyMap} disabled={!readEnabled || isBusy || !mapBuyAmount}>
+                        {isBuyingMap || isWaitingMap ? 'Acquiring...' : 'Acquire MAP'}
+                      </Btn>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                      {[25, 50, 75, 100].map(pct => (
+                        <button
+                          key={pct}
+                          onClick={() => mapBalance && setMapSellAmount(formatUnits(mapBalance * BigInt(pct) / 100n, DECIMALS.map))}
+                          style={{
+                            flex: 1,
+                            padding: 6,
+                            background: 'rgba(139,48,48,0.1)',
+                            border: '1px solid rgba(139,48,48,0.2)',
+                            borderRadius: 4,
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            color: '#6b3030',
+                          }}
+                        >{pct === 100 ? 'MAX' : `${pct}%`}</button>
+                      ))}
+                    </div>
+                    <Input
+                      value={mapSellAmount}
+                      onChange={e => setMapSellAmount(e.target.value)}
+                      placeholder="MAP amount"
+                      disabled={!readEnabled || isBusy}
+                      style={{ marginBottom: 8 }}
+                    />
+                    <div style={{ fontSize: 12, color: '#6b5c47', marginBottom: 12 }}>
+                      Your MAP: {formatToken(mapBalance, DECIMALS.map, 4)}
+                    </div>
+                    <Btn onClick={handleSellMap} disabled={!readEnabled || isBusy || !mapSellAmount} variant="danger">
+                      {isSellingMap || isWaitingSellMap ? 'Returning...' : 'Return MAP'}
+                    </Btn>
+                  </>
                 )}
               </div>
-              {!walletConnectProjectId && <p className="font-fell text-xs mt-4" style={{ color: '#8b5c47' }}>Missing {REQUIRED_ENV.walletConnect}</p>}
-              {!configReady && <p className="font-fell text-xs mt-2" style={{ color: '#8b5c47' }}>Missing addresses: {addressIssues.map(k => REQUIRED_ENV[k]).join(', ')}</p>}
-            </ParchmentPanel>
+            </div>
+          </div>
+
+          {/* TIDES OF FORTUNE */}
+          <Card title="⚓ Tides of Fortune" noteKey="tidesOfFortune" width="100%" style={{ marginBottom: 24, maxWidth: 700 }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(7, 1fr)',
+              gap: 8,
+            }}>
+              {outcomes.map((o, i) => (
+                <div key={i} style={{
+                  padding: 8,
+                  textAlign: 'center',
+                  borderRadius: 4,
+                  background: o.multiplier === 0 ? '#f5e0e0'
+                    : o.multiplier < 1 ? '#f5f0e0'
+                    : o.multiplier === 1 ? '#f5f5e0'
+                    : '#e0f5e8',
+                  border: lastOutcome?.name === o.name ? '2px solid #c9a227' : '1px solid #d4c4a0',
+                }}>
+                  <div style={{ fontFamily: "'Pirata One', cursive", fontSize: 18, color: '#3d3210' }}>
+                    {o.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#6b5c47' }}>
+                    {(o.probability * 100).toFixed(0)}%
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* CAPTAIN'S LOG */}
+          <Card title="📜 Captain's Log" noteKey="captainsLog" width={CARD_WIDTH} style={{ marginBottom: 24 }}>
+            <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 12 }}>
+              {log.length === 0 ? (
+                <p style={{
+                  fontFamily: "'IM Fell English', Georgia, serif",
+                  fontStyle: 'italic',
+                  color: '#8b7355',
+                  textAlign: 'center',
+                  padding: 20,
+                }}>
+                  The sea is calm... for now.
+                </p>
+              ) : (
+                log.slice(-5).reverse().map((entry, i) => (
+                  <div key={i} style={{
+                    padding: '8px 0',
+                    borderBottom: '1px solid #e8dcc4',
+                  }}>
+                    <div style={{
+                      fontFamily: "'IM Fell English', Georgia, serif",
+                      fontStyle: 'italic',
+                      color: entry.type === 'discovery' ? '#c9a227'
+                        : entry.type === 'win' ? '#2d6b4a'
+                        : entry.type === 'loss' ? '#8b4040'
+                        : '#4a3a28',
+                      fontSize: 14,
+                    }}>
+                      {entry.message}
+                    </div>
+                    {entry.detail && (
+                      <div style={{
+                        fontFamily: "'Pirata One', cursive",
+                        color: '#5c4a32',
+                        fontSize: 14,
+                        marginTop: 2,
+                      }}>
+                        {entry.detail}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            <button
+              onClick={() => setShowFullLog(true)}
+              style={{
+                width: '100%',
+                padding: 10,
+                background: '#e8dcc4',
+                border: '1px solid #c9b896',
+                borderRadius: 4,
+                fontFamily: "'IM Fell English', Georgia, serif",
+                fontSize: 14,
+                color: '#5c4a32',
+                cursor: 'pointer',
+              }}
+            >
+              View Full Log
+            </button>
+          </Card>
+
+          {/* FOOTER */}
+          <div style={{
+            textAlign: 'center',
+            padding: '24px 0',
+            borderTop: '1px solid #3d3210',
+          }}>
+            <p style={{
+              fontFamily: "'Pirata One', cursive",
+              fontSize: 18,
+              color: '#5c4a32',
+            }}>
+              The chest resets. The map expands. The expedition continues.
+            </p>
+            <p style={{
+              fontFamily: "'IM Fell English', Georgia, serif",
+              fontSize: 13,
+              color: '#6b5c47',
+              marginTop: 8,
+            }}>
+              Treasure Hunt — Live on {SUPPORTED_CHAIN_NAME}
+            </p>
+          </div>
+        </div>
+
+        {/* CONNECTION GATE */}
+        {!DEMO_MODE && (!isConnected || isWrongNetwork || !configReady) && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 80000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(15, 13, 10, 0.95)',
+          }}>
+            <Card title="⚓ Connect to Continue" width={400}>
+              <p style={{
+                fontFamily: "'IM Fell English', Georgia, serif",
+                color: '#5c4a32',
+                marginBottom: 16,
+              }}>
+                Connect a wallet on {SUPPORTED_CHAIN_NAME} to join the expedition.
+              </p>
+              {isWrongNetwork && (
+                <p style={{ color: '#8b3030', fontSize: 14, marginBottom: 12 }}>
+                  Wrong network detected.
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+                <ConnectButton showBalance={false} chainStatus="icon" />
+                {isWrongNetwork && switchChain && (
+                  <Btn onClick={() => switchChain({ chainId: SUPPORTED_CHAIN_ID })} style={{ width: 'auto', padding: '12px 20px' }}>
+                    Switch Network
+                  </Btn>
+                )}
+              </div>
+            </Card>
           </div>
         )}
       </div>
