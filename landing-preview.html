@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Treasure Hunt</title>
+  <link href="https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=Pirata+One&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a12;
+      overflow: hidden;
+      font-family: 'IM Fell English', serif;
+    }
+
+    /* ================================================================
+       VIDEO LAYER
+    ================================================================ */
+    .video-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      transition: filter 300ms ease-out, opacity 600ms ease-out;
+    }
+
+    .video-layer.transitioning {
+      filter: brightness(0.6) blur(6px);
+    }
+
+    .video-layer.fading-out {
+      opacity: 0;
+      transition: opacity 600ms ease-out;
+    }
+
+    .video-layer.hidden {
+      display: none;
+    }
+
+    .landing-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, transparent 30%, rgba(0,0,0,0.7) 100%);
+      pointer-events: none;
+    }
+
+    /* ================================================================
+       SKIP INTRO (top-right)
+    ================================================================ */
+    .skip-btn {
+      position: fixed;
+      top: 1.5rem;
+      right: 1.5rem;
+      z-index: 50;
+      font-family: 'IM Fell English', serif;
+      font-size: 0.85rem;
+      color: rgba(245, 236, 224, 0.6);
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    .skip-btn.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .skip-btn:hover {
+      color: rgba(245, 236, 224, 0.9);
+    }
+
+    /* ================================================================
+       ENTER BUTTON (lower third)
+    ================================================================ */
+    .enter-container {
+      position: fixed;
+      bottom: 20%;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 50;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 1s ease-in;
+    }
+
+    .enter-container.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .enter-btn {
+      font-family: 'Pirata One', cursive;
+      font-size: 1.5rem;
+      padding: 1rem 2.5rem;
+      background: linear-gradient(180deg, rgba(240, 230, 210, 0.95) 0%, rgba(220, 200, 160, 0.9) 100%);
+      color: #3d3210;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      box-shadow: 0 0 40px rgba(201, 162, 39, 0.4), 0 4px 24px rgba(0,0,0,0.5);
+      transition: box-shadow 0.3s ease, transform 0.2s ease;
+    }
+
+    .enter-btn:hover {
+      box-shadow: 0 0 60px rgba(201, 162, 39, 0.6), 0 6px 32px rgba(0,0,0,0.6);
+      transform: translateY(-2px);
+    }
+
+    .enter-btn:active {
+      transform: translateY(0);
+    }
+
+    /* ================================================================
+       WALLET MODAL (centered overlay)
+    ================================================================ */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.75);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal {
+      background: linear-gradient(180deg, #f0e6d2 0%, #e8dcc4 50%, #ddd0b8 100%);
+      border-radius: 8px;
+      padding: 2rem;
+      max-width: 360px;
+      width: 90%;
+      box-shadow: 0 25px 80px rgba(0,0,0,0.7);
+      border: 3px solid #8b7355;
+      transform: translateY(20px) scale(0.95);
+      transition: transform 0.4s ease;
+    }
+
+    .modal-overlay.open .modal {
+      transform: translateY(0) scale(1);
+    }
+
+    .modal h2 {
+      font-family: 'Pirata One', cursive;
+      font-size: 1.5rem;
+      color: #3d3210;
+      text-align: center;
+      margin-bottom: 0.5rem;
+    }
+
+    .modal p {
+      font-size: 0.9rem;
+      color: #5c4a32;
+      text-align: center;
+      margin-bottom: 1.5rem;
+      font-style: italic;
+    }
+
+    .wallet-options {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .wallet-btn {
+      font-family: 'IM Fell English', serif;
+      font-size: 1rem;
+      padding: 0.875rem 1.5rem;
+      background: #5c4a32;
+      color: #f5ece0;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      transition: background 0.2s ease;
+    }
+
+    .wallet-btn:hover {
+      background: #4a3a28;
+    }
+
+    .close-btn {
+      display: block;
+      margin: 1.25rem auto 0;
+      font-family: 'IM Fell English', serif;
+      font-size: 0.85rem;
+      color: #6b5c47;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+    }
+
+    .close-btn:hover {
+      color: #5c4a32;
+    }
+
+    /* ================================================================
+       APP LAYER
+    ================================================================ */
+    .app-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 5;
+      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+      opacity: 0;
+      pointer-events: none;
+      overflow: auto;
+    }
+
+    .app-layer.transitioning {
+      opacity: 1;
+      transition: opacity 1000ms ease-in 300ms;
+    }
+
+    .app-layer.visible {
+      opacity: 1;
+      pointer-events: auto;
+      z-index: 10;
+    }
+
+    /* Simulated app content */
+    .app-content {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #c9a227;
+      font-family: 'Pirata One', cursive;
+      font-size: 2rem;
+      padding: 2rem;
+    }
+
+    .app-content .subtitle {
+      font-family: 'IM Fell English', serif;
+      font-size: 1rem;
+      margin-top: 1rem;
+      color: #8b7355;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- VIDEO LAYER -->
+  <div class="video-layer" id="videoLayer">
+    <video class="landing-video" autoplay loop muted playsinline>
+      <source src="./landing-video.mp4" type="video/mp4">
+    </video>
+    <div class="vignette"></div>
+  </div>
+
+  <!-- SKIP INTRO -->
+  <button class="skip-btn visible" id="skipBtn">Skip Intro</button>
+
+  <!-- ENTER BUTTON -->
+  <div class="enter-container" id="enterContainer">
+    <button class="enter-btn" id="enterBtn">Enter the Expedition</button>
+  </div>
+
+  <!-- WALLET MODAL -->
+  <div class="modal-overlay" id="modal">
+    <div class="modal">
+      <h2>⚓ Join the Crew</h2>
+      <p>Connect your wallet to begin</p>
+      <div class="wallet-options">
+        <button class="wallet-btn" id="connectBtn">
+          <span>🔗</span> Connect Wallet
+        </button>
+      </div>
+      <button class="close-btn" id="closeModal">Not yet</button>
+    </div>
+  </div>
+
+  <!-- APP LAYER -->
+  <div class="app-layer" id="appLayer">
+    <div class="app-content">
+      ⚓ Treasure Hunt ⚓
+      <div class="subtitle">The expedition awaits...</div>
+    </div>
+  </div>
+
+  <script>
+    // ================================================================
+    // STATE MACHINE
+    // ================================================================
+    const STATES = {
+      INTRO_PLAYING: 'INTRO_PLAYING',
+      INTRO_READY: 'INTRO_READY',
+      CONNECTING: 'CONNECTING',
+      TRANSITIONING: 'TRANSITIONING',
+      IN_APP: 'IN_APP',
+    };
+
+    let currentState = STATES.INTRO_PLAYING;
+
+    // Elements
+    const videoLayer = document.getElementById('videoLayer');
+    const skipBtn = document.getElementById('skipBtn');
+    const enterContainer = document.getElementById('enterContainer');
+    const enterBtn = document.getElementById('enterBtn');
+    const modal = document.getElementById('modal');
+    const connectBtn = document.getElementById('connectBtn');
+    const closeModal = document.getElementById('closeModal');
+    const appLayer = document.getElementById('appLayer');
+
+    function setState(newState) {
+      console.log(`State: ${currentState} → ${newState}`);
+      currentState = newState;
+      render();
+    }
+
+    function render() {
+      // Skip button: visible only in INTRO_PLAYING
+      if (currentState === STATES.INTRO_PLAYING) {
+        skipBtn.classList.add('visible');
+      } else {
+        skipBtn.classList.remove('visible');
+      }
+
+      // Enter button: visible only in INTRO_READY
+      if (currentState === STATES.INTRO_READY) {
+        enterContainer.classList.add('visible');
+      } else {
+        enterContainer.classList.remove('visible');
+      }
+
+      // Modal: visible only in CONNECTING
+      if (currentState === STATES.CONNECTING) {
+        modal.classList.add('open');
+      } else {
+        modal.classList.remove('open');
+      }
+
+      // Video layer transitions
+      if (currentState === STATES.TRANSITIONING) {
+        videoLayer.classList.add('transitioning');
+        // Start fade out after blur
+        setTimeout(() => {
+          videoLayer.classList.add('fading-out');
+        }, 300);
+      }
+
+      if (currentState === STATES.IN_APP) {
+        videoLayer.classList.add('hidden');
+      }
+
+      // App layer transitions
+      if (currentState === STATES.TRANSITIONING) {
+        appLayer.classList.add('transitioning');
+      }
+
+      if (currentState === STATES.IN_APP) {
+        appLayer.classList.remove('transitioning');
+        appLayer.classList.add('visible');
+      }
+    }
+
+    // ================================================================
+    // EVENT HANDLERS
+    // ================================================================
+
+    // Auto-advance after 2.5s
+    setTimeout(() => {
+      if (currentState === STATES.INTRO_PLAYING) {
+        setState(STATES.INTRO_READY);
+      }
+    }, 2500);
+
+    // Skip intro
+    skipBtn.addEventListener('click', () => {
+      if (currentState === STATES.INTRO_PLAYING) {
+        setState(STATES.INTRO_READY);
+      }
+    });
+
+    // Enter expedition
+    enterBtn.addEventListener('click', () => {
+      setState(STATES.CONNECTING);
+    });
+
+    // Close modal
+    closeModal.addEventListener('click', () => {
+      if (currentState === STATES.CONNECTING) {
+        setState(STATES.INTRO_READY);
+      }
+    });
+
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal && currentState === STATES.CONNECTING) {
+        setState(STATES.INTRO_READY);
+      }
+    });
+
+    // Simulate wallet connect
+    connectBtn.addEventListener('click', () => {
+      setState(STATES.TRANSITIONING);
+
+      // Complete transition after choreography
+      setTimeout(() => {
+        setState(STATES.IN_APP);
+      }, 1900);
+    });
+
+    // Initial render
+    render();
+  </script>
+
+</body>
+</html>
