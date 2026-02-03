@@ -462,7 +462,7 @@ export default function App() {
         </section>
       </main>
 
-      {(!isConnected || isWrongNetwork || !configReady || !walletConnectProjectId) && (
+      {!DEMO_MODE && (!isConnected || isWrongNetwork || !configReady || !walletConnectProjectId) && (
         <div className="gate">
           <div className="gate-card">
             <h3>Connect to continue</h3>
