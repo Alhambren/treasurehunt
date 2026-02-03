@@ -106,32 +106,6 @@ export default function App() {
     });
   }, [DEMO_MODE, pushEvent]);
 
-  const triggerDemoTreasure = useCallback(() => {
-    const demoAmount = 123_450_000n;
-    pushEvent({
-      type: 'expedition',
-      title: 'The chest trembles',
-      detail: 'The crew holds its breath as the vault swells.',
-      meta: 'Demo signal',
-      timestamp: Date.now(),
-    });
-    window.setTimeout(() => {
-      pushEvent({
-        type: 'treasure',
-        title: 'Treasure discovered (demo)',
-        detail: `${formatToken(demoAmount, DECIMALS.usdc, 2)} USDC`,
-        meta: `Epoch ${epochId ?? '--'} - Demo trigger`,
-        timestamp: Date.now(),
-      });
-      triggerDiscovery({
-        amount: demoAmount,
-        epoch: epochId,
-        discoverer: address ?? null,
-        isDemo: true,
-      });
-    }, 700);
-  }, [address, epochId, pushEvent, triggerDiscovery]);
-
   const globalReads = useReadContracts({
     allowFailure: true,
     contracts: readEnabled
@@ -194,6 +168,32 @@ export default function App() {
     const basisPoints = (jBalance * 10000n) / mValue;
     return clamp(Number(basisPoints) / 100, 0, 100);
   }, [jBalance, mValue]);
+
+  const triggerDemoTreasure = useCallback(() => {
+    const demoAmount = 123_450_000n;
+    pushEvent({
+      type: 'expedition',
+      title: 'The chest trembles',
+      detail: 'The crew holds its breath as the vault swells.',
+      meta: 'Demo signal',
+      timestamp: Date.now(),
+    });
+    window.setTimeout(() => {
+      pushEvent({
+        type: 'treasure',
+        title: 'Treasure discovered (demo)',
+        detail: `${formatToken(demoAmount, DECIMALS.usdc, 2)} USDC`,
+        meta: `Epoch ${epochId ?? '--'} - Demo trigger`,
+        timestamp: Date.now(),
+      });
+      triggerDiscovery({
+        amount: demoAmount,
+        epoch: epochId,
+        discoverer: address ?? null,
+        isDemo: true,
+      });
+    }, 700);
+  }, [address, epochId, pushEvent, triggerDiscovery]);
 
   useWatchContractEvent({
     address: readEnabled ? addresses.treasureEngine : undefined,
