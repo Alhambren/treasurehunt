@@ -367,7 +367,7 @@ export default function App() {
             </div>
             <div className="stat">
               <span>Discovery rule</span>
-              <strong>Forced when J >= M</strong>
+              <strong>{'Forced when J >= M'}</strong>
             </div>
           </div>
           <div className="button-row">
