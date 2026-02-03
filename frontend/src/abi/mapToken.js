@@ -29,6 +29,13 @@ export const mapTokenAbi = [
   },
   {
     type: 'function',
+    name: 'getSellProceeds',
+    stateMutability: 'view',
+    inputs: [{ name: 'mapAmount', type: 'uint256' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'buy',
     stateMutability: 'nonpayable',
     inputs: [{ name: 'usdcAmount', type: 'uint256' }],
