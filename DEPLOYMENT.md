@@ -29,7 +29,7 @@ Update Vercel env values:
 - `VITE_HUNT_STAKING_ADDRESS_SEPOLIA`
 - `VITE_USDC_ADDRESS_SEPOLIA`
 
-Use `deployments/base-sepolia.json` produced by the script for addresses.
+Use the deploy script console output for addresses.
 
 ## 5) Redeploy frontend
 Trigger a Vercel redeploy.
