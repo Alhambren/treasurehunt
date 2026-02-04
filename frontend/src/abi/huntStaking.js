@@ -8,6 +8,20 @@ export const huntStakingAbi = [
   },
   {
     type: 'function',
+    name: 'rewardsOwed',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'mapRewardsOwed',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'totalStaked',
     stateMutability: 'view',
     inputs: [],

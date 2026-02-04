@@ -1,7 +1,16 @@
 import React, { useState, useEffect, useRef, createContext, useContext, useMemo, useCallback } from 'react';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount, useChainId, useReadContracts, useSwitchChain, useWatchContractEvent, useDisconnect } from 'wagmi';
-import { erc20Abi, formatUnits, isAddress } from 'viem';
+import {
+  useAccount,
+  useChainId,
+  useReadContracts,
+  useSwitchChain,
+  useWatchContractEvent,
+  useDisconnect,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from 'wagmi';
+import { erc20Abi, formatUnits, isAddress, parseUnits } from 'viem';
 
 import {
   addresses,
@@ -82,9 +91,28 @@ const toNumber = (value, decimals) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const parseAmount = (value, decimals) => {
+  if (value === null || value === undefined) return 0n;
+  const raw = typeof value === 'number' ? value.toString() : String(value).trim();
+  if (!raw || raw === '0') return 0n;
+  try {
+    return parseUnits(raw, decimals);
+  } catch {
+    return 0n;
+  }
+};
+
 const shortAddress = (value) => {
   if (!value || !isAddress(value)) return '--';
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
+};
+
+const formatError = (error) => {
+  if (!error) return 'Unknown error';
+  if (typeof error === 'string') return error;
+  if (error.shortMessage) return error.shortMessage;
+  if (error.message) return error.message;
+  return 'Transaction failed';
 };
 
 // Overlay: pointerEvents: none — note does NOT stay open when hovering the note
@@ -163,10 +191,12 @@ const TreasureHuntMockup = () => {
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
   const { disconnect } = useDisconnect();
+  const { writeContractAsync } = useWriteContract();
 
   const isWrongNetwork = isConnected && chainId !== SUPPORTED_CHAIN_ID;
   const readEnabled = isConnected && !isWrongNetwork && configReady;
-  const interactionsEnabled = DEMO_MODE && !readEnabled;
+  const demoOnly = DEMO_MODE && !readEnabled;
+  const interactionsEnabled = readEnabled || demoOnly;
 
   // Global state
   const [J, setJ] = useState(0);
@@ -180,6 +210,7 @@ const TreasureHuntMockup = () => {
   const [stakedHunt, setStakedHunt] = useState(0);
   const [hasQualifyingBet, setHasQualifyingBet] = useState(false);
   const [pendingRewards, setPendingRewards] = useState(0);
+  const [pendingMapRewards, setPendingMapRewards] = useState(0);
   const [mapBalance, setMapBalance] = useState(0);
   const [mapSupply, setMapSupply] = useState(0);
 
@@ -213,6 +244,9 @@ const TreasureHuntMockup = () => {
   const [mapSellError, setMapSellError] = useState(null);
   const [mapSellSuccess, setMapSellSuccess] = useState(false);
 
+  // Transaction state
+  const [pendingTx, setPendingTx] = useState(null);
+
   // Wallet Display State
   const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
 
@@ -227,6 +261,11 @@ const TreasureHuntMockup = () => {
   const [mapGlow, setMapGlow] = useState(false);
   const [lastSeenEpochId, setLastSeenEpochId] = useState(0);
 
+  const { data: pendingReceipt, error: pendingReceiptError } = useWaitForTransactionReceipt({
+    hash: pendingTx?.hash,
+    query: { enabled: !!pendingTx?.hash },
+  });
+
   const globalReads = useReadContracts({
     allowFailure: true,
     contracts: readEnabled
@@ -234,6 +273,8 @@ const TreasureHuntMockup = () => {
           { address: addresses.treasureEngine, abi: treasureEngineAbi, functionName: 'J' },
           { address: addresses.treasureEngine, abi: treasureEngineAbi, functionName: 'M' },
           { address: addresses.treasureEngine, abi: treasureEngineAbi, functionName: 'epochId' },
+          { address: addresses.treasureEngine, abi: treasureEngineAbi, functionName: 'MIN_BET' },
+          { address: addresses.treasureEngine, abi: treasureEngineAbi, functionName: 'MAX_BET_BPS' },
           {
             address: addresses.usdc,
             abi: erc20Abi,
@@ -260,6 +301,10 @@ const TreasureHuntMockup = () => {
             { address: addresses.huntToken, abi: erc20Abi, functionName: 'balanceOf', args: [address] },
             { address: addresses.mapToken, abi: mapTokenAbi, functionName: 'balanceOf', args: [address] },
             { address: addresses.huntStaking, abi: huntStakingAbi, functionName: 'stakedBalance', args: [address] },
+            { address: addresses.huntStaking, abi: huntStakingAbi, functionName: 'cooldownStart', args: [address] },
+            { address: addresses.huntStaking, abi: huntStakingAbi, functionName: 'isQualified', args: [address] },
+            { address: addresses.huntStaking, abi: huntStakingAbi, functionName: 'rewardsOwed', args: [address] },
+            { address: addresses.huntStaking, abi: huntStakingAbi, functionName: 'mapRewardsOwed', args: [address] },
           ]
         : [],
     query: {
@@ -269,15 +314,37 @@ const TreasureHuntMockup = () => {
     },
   });
 
-  const [jBalance, mValue, epochValue, engineUsdc, mapPrice, mapSupplyRaw] = useMemo(() => {
+  const allowanceReads = useReadContracts({
+    allowFailure: true,
+    contracts:
+      readEnabled && address
+        ? [
+            { address: addresses.usdc, abi: erc20Abi, functionName: 'allowance', args: [address, addresses.treasureEngine] },
+            { address: addresses.usdc, abi: erc20Abi, functionName: 'allowance', args: [address, addresses.mapToken] },
+            { address: addresses.huntToken, abi: erc20Abi, functionName: 'allowance', args: [address, addresses.huntStaking] },
+          ]
+        : [],
+    query: {
+      enabled: readEnabled && !!address,
+      refetchInterval: false,
+      watch: true,
+    },
+  });
+
+  const [jBalance, mValue, epochValue, minBetRaw, maxBetBpsRaw, engineUsdc, mapPrice, mapSupplyRaw] = useMemo(() => {
     const results = globalReads.data || [];
     return results.map((entry) => entry?.result ?? null);
   }, [globalReads.data]);
 
-  const [userUsdc, huntBal, mapBal, stakedBal] = useMemo(() => {
+  const [userUsdc, huntBal, mapBal, stakedBal, cooldownStartRaw, isQualifiedRaw, rewardsOwedRaw, mapRewardsOwedRaw] = useMemo(() => {
     const results = userReads.data || [];
     return results.map((entry) => entry?.result ?? null);
   }, [userReads.data]);
+
+  const [engineAllowance, mapAllowance, stakingAllowance] = useMemo(() => {
+    const results = allowanceReads.data || [];
+    return results.map((entry) => entry?.result ?? null);
+  }, [allowanceReads.data]);
 
   const freeUSDC = useMemo(() => {
     if (engineUsdc === null || engineUsdc === undefined) return null;
@@ -294,6 +361,35 @@ const TreasureHuntMockup = () => {
   const liveMapSupply = useMemo(() => toNumber(mapSupplyRaw, DECIMALS.map), [mapSupplyRaw]);
   const liveMapPrice = useMemo(() => toNumber(mapPrice, DECIMALS.usdc), [mapPrice]);
   const liveUserUsdc = useMemo(() => toNumber(userUsdc, DECIMALS.usdc), [userUsdc]);
+  const liveMinBet = useMemo(() => toNumber(minBetRaw, DECIMALS.usdc) || 0.1, [minBetRaw]);
+  const maxBetRaw = useMemo(() => {
+    if (mValue === null || mValue === undefined) return null;
+    if (maxBetBpsRaw === null || maxBetBpsRaw === undefined) return null;
+    return (mValue * maxBetBpsRaw) / 10000n;
+  }, [mValue, maxBetBpsRaw]);
+  const liveMaxBet = useMemo(() => {
+    if (maxBetRaw === null) return M * 0.01;
+    return toNumber(maxBetRaw, DECIMALS.usdc);
+  }, [maxBetRaw, M]);
+  const liveCooldownStartMs = useMemo(() => {
+    if (cooldownStartRaw === null || cooldownStartRaw === undefined) return 0;
+    const seconds = Number(cooldownStartRaw);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+  }, [cooldownStartRaw]);
+  const liveIsQualified = useMemo(() => !!isQualifiedRaw, [isQualifiedRaw]);
+  const liveRewardsOwed = useMemo(() => toNumber(rewardsOwedRaw, DECIMALS.usdc), [rewardsOwedRaw]);
+  const liveMapRewardsOwed = useMemo(() => toNumber(mapRewardsOwedRaw, DECIMALS.map), [mapRewardsOwedRaw]);
+  const betAmountRaw = useMemo(() => parseAmount(betAmount, DECIMALS.usdc), [betAmount]);
+  const stakeAmountRaw = useMemo(() => parseAmount(stakeAmount, DECIMALS.hunt), [stakeAmount]);
+  const mapPurchaseRaw = useMemo(() => parseAmount(mapPurchaseAmount, DECIMALS.usdc), [mapPurchaseAmount]);
+  const mapSellRaw = useMemo(() => parseAmount(mapSellAmount, DECIMALS.map), [mapSellAmount]);
+  const usdcEngineAllowance = useMemo(() => (engineAllowance === null || engineAllowance === undefined ? 0n : engineAllowance), [engineAllowance]);
+  const usdcMapAllowance = useMemo(() => (mapAllowance === null || mapAllowance === undefined ? 0n : mapAllowance), [mapAllowance]);
+  const huntStakingAllowance = useMemo(() => (stakingAllowance === null || stakingAllowance === undefined ? 0n : stakingAllowance), [stakingAllowance]);
+  const needsEngineApproval = betAmountRaw > 0n && usdcEngineAllowance < betAmountRaw;
+  const needsMapApproval = mapPurchaseRaw > 0n && usdcMapAllowance < mapPurchaseRaw;
+  const needsStakingApproval = stakeAmountRaw > 0n && huntStakingAllowance < stakeAmountRaw;
+  const txBusy = !!pendingTx;
 
   useEffect(() => {
     if (!readEnabled) return;
@@ -305,9 +401,25 @@ const TreasureHuntMockup = () => {
     setStakedHunt(liveStaked);
     setMapSupply(liveMapSupply);
     setBalance(liveUserUsdc);
-    setHasQualifyingBet(false);
-    setPendingRewards(0);
-  }, [readEnabled, liveJ, liveM, liveEpoch, liveHunt, liveMap, liveStaked, liveMapSupply, liveUserUsdc]);
+    setHasQualifyingBet(liveIsQualified);
+    setPendingRewards(liveRewardsOwed);
+    setPendingMapRewards(liveMapRewardsOwed);
+    setCooldownStart(liveCooldownStartMs || null);
+  }, [
+    readEnabled,
+    liveJ,
+    liveM,
+    liveEpoch,
+    liveHunt,
+    liveMap,
+    liveStaked,
+    liveMapSupply,
+    liveUserUsdc,
+    liveIsQualified,
+    liveRewardsOwed,
+    liveMapRewardsOwed,
+    liveCooldownStartMs,
+  ]);
 
   // Cooldown timer
   useEffect(() => {
@@ -516,6 +628,43 @@ const TreasureHuntMockup = () => {
     setLog(prev => [...prev.slice(-9), { message, type, time: new Date().toLocaleTimeString() }]);
   };
 
+  const submitTx = useCallback(
+    async ({ label, onStart, onSuccess, onError, ...tx }) => {
+      if (!writeContractAsync) {
+        addLog('Wallet not ready for transactions.', 'error');
+        return;
+      }
+      if (pendingTx) {
+        addLog('Another transaction is still awaiting confirmation.', 'info');
+        return;
+      }
+      onStart?.();
+      try {
+        const hash = await writeContractAsync(tx);
+        addLog(`${label} submitted`, 'info');
+        setPendingTx({ hash, label, onSuccess, onError });
+      } catch (error) {
+        onError?.(error);
+        addLog(formatError(error), 'error');
+      }
+    },
+    [writeContractAsync, pendingTx, addLog]
+  );
+
+  useEffect(() => {
+    if (!pendingTx || !pendingReceipt) return;
+    pendingTx.onSuccess?.(pendingReceipt);
+    addLog(`${pendingTx.label} confirmed`, 'result');
+    setPendingTx(null);
+  }, [pendingReceipt, pendingTx]);
+
+  useEffect(() => {
+    if (!pendingTx || !pendingReceiptError) return;
+    pendingTx.onError?.(pendingReceiptError);
+    addLog(formatError(pendingReceiptError), 'error');
+    setPendingTx(null);
+  }, [pendingReceiptError, pendingTx]);
+
   useWatchContractEvent({
     address: readEnabled ? addresses.treasureEngine : undefined,
     abi: treasureEngineAbi,
@@ -543,6 +692,29 @@ const TreasureHuntMockup = () => {
         const parsedM = newM ? Number(formatUnits(newM, DECIMALS.usdc)) : 0;
         addLog(`New expedition: M is now ${parsedM.toFixed(2)} USDC`, 'expedition');
         addLog(`Epoch ${epoch ?? '--'} begins`, 'result');
+      });
+    },
+  });
+
+  useWatchContractEvent({
+    address: readEnabled ? addresses.treasureEngine : undefined,
+    abi: treasureEngineAbi,
+    eventName: 'BetResolved',
+    enabled: readEnabled && !!addresses.treasureEngine,
+    onLogs: (logs) => {
+      logs.forEach((log) => {
+        const { participant, amount, outcomeIndex, payout } = log.args || {};
+        const parsedAmount = amount ? Number(formatUnits(amount, DECIMALS.usdc)) : 0;
+        const parsedPayout = payout ? Number(formatUnits(payout, DECIMALS.usdc)) : 0;
+        const outcome = typeof outcomeIndex === 'number' || typeof outcomeIndex === 'bigint'
+          ? outcomes[Number(outcomeIndex)]
+          : null;
+        if (outcome) {
+          setLastOutcome(outcome);
+          setLastFateMessage(getRandomMessage(outcome.name));
+        }
+        addLog(`Exploration resolved: ${parsedAmount.toFixed(2)} USDC → ${parsedPayout.toFixed(2)} USDC`, 'result');
+        addLog(`${shortAddress(participant)} • Outcome ${outcomeIndex ?? '--'}`, 'expedition');
       });
     },
   });
@@ -595,135 +767,286 @@ const TreasureHuntMockup = () => {
     return { discovered: false, newJ };
   };
 
+  const approveUsdcForEngine = async () => {
+    if (!readEnabled) {
+      addLog('Connect your wallet to approve USDC.', 'info');
+      return;
+    }
+    if (betAmountRaw === 0n) {
+      addLog('Enter an amount to approve.', 'info');
+      return;
+    }
+    await submitTx({
+      label: 'Approve USDC',
+      address: addresses.usdc,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [addresses.treasureEngine, betAmountRaw],
+    });
+  };
+
+  const approveUsdcForMap = async () => {
+    if (!readEnabled) {
+      addLog('Connect your wallet to approve USDC.', 'info');
+      return;
+    }
+    if (mapPurchaseRaw === 0n) {
+      addLog('Enter an amount to approve.', 'info');
+      return;
+    }
+    await submitTx({
+      label: 'Approve USDC',
+      address: addresses.usdc,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [addresses.mapToken, mapPurchaseRaw],
+    });
+  };
+
+  const approveHuntForStaking = async () => {
+    if (!readEnabled) {
+      addLog('Connect your wallet to approve HUNT.', 'info');
+      return;
+    }
+    if (stakeAmountRaw === 0n) {
+      addLog('Enter an amount to approve.', 'info');
+      return;
+    }
+    await submitTx({
+      label: 'Approve HUNT',
+      address: addresses.huntToken,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [addresses.huntStaking, stakeAmountRaw],
+    });
+  };
+
   // Canonical: "Begin Exploration" (never "bet" or "wager")
-  const placeBet = () => {
-    if (!interactionsEnabled) {
-      addLog('Read-only mode: exploration is disabled.', 'info');
-      return;
-    }
-    if (betAmount < 0.10) {
-      addLog("The sea refuses the command.", 'error');
-      return;
-    }
-    if (betAmount > M * 0.01) {
-      addLog("The sea refuses the command.", 'error');
-      return;
-    }
-    if (betAmount > balance) {
-      addLog("The sea refuses the command.", 'error');
-      return;
-    }
-
-    setIsSpinning(true);
-    setBalance(prev => prev - betAmount);
-    setHasQualifyingBet(true);
-
-    setTimeout(() => {
-      const outcome = resolveOutcome();
-      setLastOutcome(outcome);
-      setIsSpinning(false);
-
-      if (outcome.multiplier > 0) {
-        const returnAmount = betAmount * outcome.multiplier;
-        setBalance(prev => prev + returnAmount);
-        const fateMsg = getRandomMessage(outcome.name);
-        setLastFateMessage(fateMsg);
-        // Flavor line
-        addLog(fateMsg, outcome.multiplier > 1 ? 'fortune' : 'partial');
-        // Outcome line (plain facts)
-        addLog(`Result: ${outcome.name} — Received ${returnAmount.toFixed(2)} USDC`, 'result');
-      } else {
-        const contribution = betAmount;
-        const toTreasure = contribution * 0.50;
-        setN0(prev => prev + 1);
-
-        const huntMinted = contribution * getEmissionRate(N0);
-        setHuntBalance(prev => prev + huntMinted);
-        const fateMsg = getRandomMessage('0×');
-        setLastFateMessage(fateMsg);
-        // Flavor line
-        addLog(fateMsg, 'contribution');
-        // Outcome line (plain facts)
-        addLog(`Result: 0× — Contributed ${contribution.toFixed(2)} USDC to the expedition`, 'result');
-        addLog(`Minted: +${huntMinted.toFixed(4)} HUNT`, 'mint');
-
-        const mapBuyUsdc = contribution * 0.39;
-        const mapMinted = mapBuyUsdc / getMapPrice(mapSupply) * 0.8;
-        setMapSupply(prev => prev + mapMinted);
-
-        setTreasureGlow(true);
-        setMapPriceTick('up');
-        setHuntSupplyTick('tightening');
-
-        if (stakedHunt > 0 && hasQualifyingBet) {
-          const stakerMapShare = mapMinted * (19/39);
-          setMapBalance(prev => prev + stakerMapShare);
-        }
-
-        const prevJ = J;
-        setJ(Math.min(prevJ + toTreasure, M));
-        const discovery = checkDiscovery(prevJ, toTreasure);
-        if (discovery.discovered) {
-          setTimeout(() => showFullDiscovery(discovery.amount), 500);
-        }
+  const placeBet = async () => {
+    if (demoOnly) {
+      if (betAmount < 0.10) {
+        addLog("The sea refuses the command.", 'error');
+        return;
       }
-    }, 1500);
+      if (betAmount > M * 0.01) {
+        addLog("The sea refuses the command.", 'error');
+        return;
+      }
+      if (betAmount > balance) {
+        addLog("The sea refuses the command.", 'error');
+        return;
+      }
+
+      setIsSpinning(true);
+      setBalance(prev => prev - betAmount);
+      setHasQualifyingBet(true);
+
+      setTimeout(() => {
+        const outcome = resolveOutcome();
+        setLastOutcome(outcome);
+        setIsSpinning(false);
+
+        if (outcome.multiplier > 0) {
+          const returnAmount = betAmount * outcome.multiplier;
+          setBalance(prev => prev + returnAmount);
+          const fateMsg = getRandomMessage(outcome.name);
+          setLastFateMessage(fateMsg);
+          // Flavor line
+          addLog(fateMsg, outcome.multiplier > 1 ? 'fortune' : 'partial');
+          // Outcome line (plain facts)
+          addLog(`Result: ${outcome.name} — Received ${returnAmount.toFixed(2)} USDC`, 'result');
+        } else {
+          const contribution = betAmount;
+          const toTreasure = contribution * 0.50;
+          setN0(prev => prev + 1);
+
+          const huntMinted = contribution * getEmissionRate(N0);
+          setHuntBalance(prev => prev + huntMinted);
+          const fateMsg = getRandomMessage('0×');
+          setLastFateMessage(fateMsg);
+          // Flavor line
+          addLog(fateMsg, 'contribution');
+          // Outcome line (plain facts)
+          addLog(`Result: 0× — Contributed ${contribution.toFixed(2)} USDC to the expedition`, 'result');
+          addLog(`Minted: +${huntMinted.toFixed(4)} HUNT`, 'mint');
+
+          const mapBuyUsdc = contribution * 0.39;
+          const mapMinted = mapBuyUsdc / getMapPrice(mapSupply) * 0.8;
+          setMapSupply(prev => prev + mapMinted);
+
+          setTreasureGlow(true);
+          setMapPriceTick('up');
+          setHuntSupplyTick('tightening');
+
+          if (stakedHunt > 0 && hasQualifyingBet) {
+            const stakerMapShare = mapMinted * (19/39);
+            setMapBalance(prev => prev + stakerMapShare);
+          }
+
+          const prevJ = J;
+          setJ(Math.min(prevJ + toTreasure, M));
+          const discovery = checkDiscovery(prevJ, toTreasure);
+          if (discovery.discovered) {
+            setTimeout(() => showFullDiscovery(discovery.amount), 500);
+          }
+        }
+      }, 1500);
+      return;
+    }
+
+    if (!readEnabled) {
+      addLog('Connect your wallet to explore.', 'info');
+      return;
+    }
+
+    const betValue = Number(betAmount) || 0;
+    if (betValue < liveMinBet) {
+      addLog("The sea refuses the command.", 'error');
+      return;
+    }
+    if (maxBetRaw && betAmountRaw > maxBetRaw) {
+      addLog("The sea refuses the command.", 'error');
+      return;
+    }
+    if (!maxBetRaw && betValue > M * 0.01) {
+      addLog("The sea refuses the command.", 'error');
+      return;
+    }
+    if (userUsdc !== null && userUsdc !== undefined && betAmountRaw > userUsdc) {
+      addLog("The sea refuses the command.", 'error');
+      return;
+    }
+    if (needsEngineApproval) {
+      addLog('Approve USDC before beginning exploration.', 'info');
+      return;
+    }
+
+    await submitTx({
+      label: 'Exploration',
+      onStart: () => setIsSpinning(true),
+      onSuccess: () => setIsSpinning(false),
+      onError: () => setIsSpinning(false),
+      address: addresses.treasureEngine,
+      abi: treasureEngineAbi,
+      functionName: 'placeBet',
+      args: [betAmountRaw],
+    });
   };
 
   // Staking functions (canonical: "Ship's Hold")
-  const stake = (amount) => {
-    if (!interactionsEnabled) {
-      addLog('Read-only mode: staking is disabled.', 'info');
+  const stake = async (amount) => {
+    if (demoOnly) {
+      if (amount <= 0 || amount > huntBalance) return;
+      setHuntBalance(prev => prev - amount);
+      setStakedHunt(prev => prev + amount);
+      addLog("HUNT stowed below deck.", 'stake');
+      return;
+    }
+    if (!readEnabled) {
+      addLog('Connect your wallet to stake.', 'info');
       return;
     }
     if (amount <= 0 || amount > huntBalance) return;
-    setHuntBalance(prev => prev - amount);
-    setStakedHunt(prev => prev + amount);
-    addLog("HUNT stowed below deck.", 'stake');
-  };
-
-  const initiateWithdraw = () => {
-    if (!interactionsEnabled) {
-      addLog('Read-only mode: withdrawals are disabled.', 'info');
+    if (needsStakingApproval) {
+      addLog('Approve HUNT before staking.', 'info');
       return;
     }
-    if (stakedHunt <= 0 || cooldownStart) return;
-    setCooldownStart(Date.now());
-    addLog("The gangplank lowers in seven days.", 'stake');
+
+    await submitTx({
+      label: 'Stake HUNT',
+      address: addresses.huntStaking,
+      abi: huntStakingAbi,
+      functionName: 'stake',
+      args: [stakeAmountRaw],
+    });
   };
 
-  const cancelWithdraw = () => {
-    if (!interactionsEnabled) {
-      addLog('Read-only mode: withdrawals are disabled.', 'info');
+  const initiateWithdraw = async () => {
+    if (demoOnly) {
+      if (stakedHunt <= 0 || cooldownStart) return;
+      setCooldownStart(Date.now());
+      addLog("The gangplank lowers in seven days.", 'stake');
       return;
     }
-    setCooldownStart(null);
-    addLog("No sailor leaves mid-watch.", 'stake');
+    if (!readEnabled) {
+      addLog('Connect your wallet to withdraw.', 'info');
+      return;
+    }
+    await submitTx({
+      label: 'Initiate Withdrawal',
+      address: addresses.huntStaking,
+      abi: huntStakingAbi,
+      functionName: 'initiateWithdraw',
+      args: [],
+    });
   };
 
-  const completeWithdraw = () => {
-    if (!interactionsEnabled) {
-      addLog('Read-only mode: withdrawals are disabled.', 'info');
+  const cancelWithdraw = async () => {
+    if (demoOnly) {
+      setCooldownStart(null);
+      addLog("No sailor leaves mid-watch.", 'stake');
+      return;
+    }
+    if (!readEnabled) {
+      addLog('Connect your wallet to withdraw.', 'info');
+      return;
+    }
+    await submitTx({
+      label: 'Cancel Withdrawal',
+      address: addresses.huntStaking,
+      abi: huntStakingAbi,
+      functionName: 'cancelWithdraw',
+      args: [],
+    });
+  };
+
+  const completeWithdraw = async () => {
+    if (demoOnly) {
+      if (cooldownRemaining > 0) return;
+      const amount = stakedHunt;
+      setStakedHunt(0);
+      setHuntBalance(prev => prev + amount);
+      setCooldownStart(null);
+      addLog("HUNT returned to the hold.", 'stake');
+      return;
+    }
+    if (!readEnabled) {
+      addLog('Connect your wallet to withdraw.', 'info');
       return;
     }
     if (cooldownRemaining > 0) return;
-    const amount = stakedHunt;
-    setStakedHunt(0);
-    setHuntBalance(prev => prev + amount);
-    setCooldownStart(null);
-    addLog("HUNT returned to the hold.", 'stake');
+    const withdrawAmount = stakedBal ?? stakeAmountRaw;
+    if (!withdrawAmount || withdrawAmount === 0n) return;
+    await submitTx({
+      label: 'Withdraw HUNT',
+      address: addresses.huntStaking,
+      abi: huntStakingAbi,
+      functionName: 'withdraw',
+      args: [withdrawAmount],
+    });
   };
 
-  const claimRewards = () => {
-    if (!interactionsEnabled) {
-      addLog('Read-only mode: claims are disabled.', 'info');
+  const claimRewards = async () => {
+    if (demoOnly) {
+      if (pendingRewards > 0) {
+        setBalance(prev => prev + pendingRewards);
+        addLog("The crew's share has been claimed.", 'reward');
+        setPendingRewards(0);
+        setPendingMapRewards(0);
+      }
       return;
     }
-    if (pendingRewards > 0) {
-      setBalance(prev => prev + pendingRewards);
-      addLog("The crew's share has been claimed.", 'reward');
-      setPendingRewards(0);
+    if (!readEnabled) {
+      addLog('Connect your wallet to claim rewards.', 'info');
+      return;
     }
+    await submitTx({
+      label: 'Claim Rewards',
+      address: addresses.huntStaking,
+      abi: huntStakingAbi,
+      functionName: 'claimRewards',
+      args: [],
+    });
   };
 
   // MAP Purchase — Single action flow
@@ -734,8 +1057,44 @@ const TreasureHuntMockup = () => {
   };
 
   const handleMapPurchase = () => {
-    if (!interactionsEnabled) {
-      addLog('Read-only mode: MAP purchases are disabled.', 'info');
+    if (demoOnly) {
+      setMapPurchaseError(null);
+      const amount = parseFloat(mapPurchaseAmount) || 0;
+
+      if (amount <= 0) {
+        setMapPurchaseError('Enter a valid amount');
+        return;
+      }
+      if (amount > balance) {
+        setMapPurchaseError('Insufficient balance');
+        return;
+      }
+
+      setMapPurchasing(true);
+
+      // Simulate wallet confirmation
+      setTimeout(() => {
+        const estimatedMap = getEstimatedMapOut();
+
+        // Execute purchase — update state in place
+        setBalance(prev => prev - amount);
+        setMapBalance(prev => prev + estimatedMap);
+        setMapSupply(prev => prev + estimatedMap);
+        setMapPriceTick('up');
+
+        // Brief success flash
+        setMapPurchaseSuccess(true);
+        setMapPurchasing(false);
+        setMapPurchaseAmount('');
+
+        // Clear success after brief moment
+        setTimeout(() => setMapPurchaseSuccess(false), 2000);
+      }, 800);
+      return;
+    }
+
+    if (!readEnabled) {
+      addLog('Connect your wallet to buy MAP.', 'info');
       return;
     }
     setMapPurchaseError(null);
@@ -749,31 +1108,30 @@ const TreasureHuntMockup = () => {
       setMapPurchaseError('Insufficient balance');
       return;
     }
+    if (needsMapApproval) {
+      setMapPurchaseError('Approve USDC before buying MAP');
+      return;
+    }
 
-    setMapPurchasing(true);
-
-    // Simulate wallet confirmation
-    setTimeout(() => {
-      const estimatedMap = getEstimatedMapOut();
-
-      // Execute purchase — update state in place
-      setBalance(prev => prev - amount);
-      setMapBalance(prev => prev + estimatedMap);
-      setMapSupply(prev => prev + estimatedMap);
-      setMapPriceTick('up');
-
-      // Brief success flash
-      setMapPurchaseSuccess(true);
-      setMapPurchasing(false);
-      setMapPurchaseAmount('');
-
-      // Clear success after brief moment
-      setTimeout(() => setMapPurchaseSuccess(false), 2000);
-    }, 800);
+    submitTx({
+      label: 'Buy MAP',
+      onStart: () => setMapPurchasing(true),
+      onSuccess: () => {
+        setMapPurchaseSuccess(true);
+        setMapPurchasing(false);
+        setMapPurchaseAmount('');
+        setTimeout(() => setMapPurchaseSuccess(false), 2000);
+      },
+      onError: () => setMapPurchasing(false),
+      address: addresses.mapToken,
+      abi: mapTokenAbi,
+      functionName: 'buy',
+      args: [mapPurchaseRaw],
+    });
   };
 
   const setMapAmountPercent = (percent) => {
-    if (!interactionsEnabled) return;
+    if (!interactionsEnabled || txBusy) return;
     const amount = (balance * percent / 100).toFixed(2);
     setMapPurchaseAmount(amount);
     setMapPurchaseError(null);
@@ -798,8 +1156,47 @@ const TreasureHuntMockup = () => {
   };
 
   const handleMapSell = () => {
-    if (!interactionsEnabled) {
-      addLog('Read-only mode: MAP sales are disabled.', 'info');
+    if (demoOnly) {
+      setMapSellError(null);
+      const amount = parseFloat(mapSellAmount) || 0;
+
+      if (amount <= 0) {
+        setMapSellError('Enter a valid amount');
+        return;
+      }
+      if (amount > mapBalance) {
+        setMapSellError('Insufficient MAP balance');
+        return;
+      }
+
+      setMapSelling(true);
+
+      // Simulate wallet confirmation
+      setTimeout(() => {
+        const usdcOut = getEstimatedUsdcOut();
+
+        // Execute sell — update state in place
+        setMapBalance(prev => prev - amount);
+        setMapSupply(prev => Math.max(0, prev - amount));
+        setBalance(prev => prev + usdcOut);
+        setMapPriceTick('down');
+
+        // Log the sale
+        addLog(`Returned ${amount.toFixed(4)} MAP to the sea. Received ${usdcOut.toFixed(2)} USDC.`, 'map');
+
+        // Brief success flash
+        setMapSellSuccess(true);
+        setMapSelling(false);
+        setMapSellAmount('');
+
+        // Clear success after brief moment
+        setTimeout(() => setMapSellSuccess(false), 2000);
+      }, 800);
+      return;
+    }
+
+    if (!readEnabled) {
+      addLog('Connect your wallet to sell MAP.', 'info');
       return;
     }
     setMapSellError(null);
@@ -814,33 +1211,25 @@ const TreasureHuntMockup = () => {
       return;
     }
 
-    setMapSelling(true);
-
-    // Simulate wallet confirmation
-    setTimeout(() => {
-      const usdcOut = getEstimatedUsdcOut();
-
-      // Execute sell — update state in place
-      setMapBalance(prev => prev - amount);
-      setMapSupply(prev => Math.max(0, prev - amount));
-      setBalance(prev => prev + usdcOut);
-      setMapPriceTick('down');
-
-      // Log the sale
-      addLog(`Returned ${amount.toFixed(4)} MAP to the sea. Received ${usdcOut.toFixed(2)} USDC.`, 'map');
-
-      // Brief success flash
-      setMapSellSuccess(true);
-      setMapSelling(false);
-      setMapSellAmount('');
-
-      // Clear success after brief moment
-      setTimeout(() => setMapSellSuccess(false), 2000);
-    }, 800);
+    submitTx({
+      label: 'Sell MAP',
+      onStart: () => setMapSelling(true),
+      onSuccess: () => {
+        setMapSellSuccess(true);
+        setMapSelling(false);
+        setMapSellAmount('');
+        setTimeout(() => setMapSellSuccess(false), 2000);
+      },
+      onError: () => setMapSelling(false),
+      address: addresses.mapToken,
+      abi: mapTokenAbi,
+      functionName: 'sell',
+      args: [mapSellRaw],
+    });
   };
 
   const setMapSellPercent = (percent) => {
-    if (!interactionsEnabled) return;
+    if (!interactionsEnabled || txBusy) return;
     const amount = (mapBalance * percent / 100).toFixed(4);
     setMapSellAmount(amount);
     setMapSellError(null);
@@ -1438,9 +1827,9 @@ const TreasureHuntMockup = () => {
               <label className="font-pirata text-sm" style={{ color: '#5c4a32' }}>Exploration Contribution (USDC)</label>
               <input
                 type="number"
-                min="0.10"
-                max={M * 0.01}
-                step="0.10"
+                min={liveMinBet}
+                max={liveMaxBet}
+                step="0.01"
                 value={betAmount}
                 onChange={(e) => setBetAmount(parseFloat(e.target.value) || 0)}
                 className="w-full rounded p-2 mt-1"
@@ -1450,16 +1839,27 @@ const TreasureHuntMockup = () => {
                   color: '#3d3210',
                   boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.1)'
                 }}
-                disabled={isSpinning || !interactionsEnabled}
+                disabled={isSpinning || !interactionsEnabled || txBusy}
              />
               <div className="font-fell text-xs mt-1 italic" style={{ color: '#6b5c47' }}>
                 Every expedition welcomes at least one step.
               </div>
             </div>
 
+            {readEnabled && needsEngineApproval && (
+              <WoodButton
+                onClick={approveUsdcForEngine}
+                disabled={isSpinning || betAmountRaw === 0n || txBusy}
+                variant="secondary"
+                className="w-full py-2 mb-2"
+              >
+                Approve USDC
+              </WoodButton>
+            )}
+
             <WoodButton
               onClick={placeBet}
-              disabled={isSpinning || betAmount < 0.10 || !interactionsEnabled}
+              disabled={isSpinning || betAmount < liveMinBet || !interactionsEnabled || (needsEngineApproval && readEnabled) || txBusy}
               className="w-full py-3 text-xl"
             >
               {isSpinning ? '🧭 The oracle peers into the deep…' : '🧭 Begin Exploration'}
@@ -1557,11 +1957,14 @@ const TreasureHuntMockup = () => {
                   ✦ Pending
                   <CartographerNote noteKey="globalDiscovery" />
                 </span>
-                <span className="font-pirata text-lg" style={{ color: '#2d4a2d' }}>${pendingRewards.toFixed(2)}</span>
+                <div className="text-right">
+                  <span className="font-pirata text-lg" style={{ color: '#2d4a2d' }}>${pendingRewards.toFixed(2)}</span>
+                  <div className="font-fell text-xs italic" style={{ color: '#3d5c3d' }}>{pendingMapRewards.toFixed(4)} MAP</div>
+                </div>
               </div>
 
-              {pendingRewards > 0 && (
-                <WoodButton onClick={claimRewards} disabled={!interactionsEnabled} className="w-full py-2">
+              {(pendingRewards > 0 || pendingMapRewards > 0) && (
+                <WoodButton onClick={claimRewards} disabled={!interactionsEnabled || txBusy} className="w-full py-2">
                   Claim Yer Rewards
                 </WoodButton>
               )}
@@ -1633,9 +2036,18 @@ const TreasureHuntMockup = () => {
                     color: '#3d3210',
                     boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.1)'
                   }}
-                  disabled={!interactionsEnabled}
+                  disabled={!interactionsEnabled || txBusy}
                />
-                <WoodButton onClick={() => stake(stakeAmount)} disabled={!interactionsEnabled} className="w-full mt-2 py-2">
+                {readEnabled && needsStakingApproval && (
+                  <WoodButton onClick={approveHuntForStaking} disabled={stakeAmountRaw === 0n || txBusy} variant="secondary" className="w-full mt-2 py-2">
+                    Approve HUNT
+                  </WoodButton>
+                )}
+                <WoodButton
+                  onClick={() => stake(stakeAmount)}
+                  disabled={!interactionsEnabled || (needsStakingApproval && readEnabled) || txBusy}
+                  className="w-full mt-2 py-2"
+                >
                   Stow HUNT Below Deck
                 </WoodButton>
               </div>
@@ -1643,19 +2055,19 @@ const TreasureHuntMockup = () => {
 
             {/* Withdraw Controls */}
             {stakedHunt > 0 && !cooldownStart && (
-              <WoodButton onClick={initiateWithdraw} disabled={!interactionsEnabled} variant="secondary" className="w-full py-2">
+              <WoodButton onClick={initiateWithdraw} disabled={!interactionsEnabled || txBusy} variant="secondary" className="w-full py-2">
                 Prepare to Disembark
               </WoodButton>
             )}
 
             {cooldownStart && cooldownRemaining > 0 && (
-              <WoodButton onClick={cancelWithdraw} disabled={!interactionsEnabled} variant="secondary" className="w-full py-2">
+              <WoodButton onClick={cancelWithdraw} disabled={!interactionsEnabled || txBusy} variant="secondary" className="w-full py-2">
                 Cancel Disembarkation
               </WoodButton>
             )}
 
             {cooldownStart && cooldownRemaining === 0 && (
-              <WoodButton onClick={completeWithdraw} disabled={!interactionsEnabled} className="w-full py-2">
+              <WoodButton onClick={completeWithdraw} disabled={!interactionsEnabled || txBusy} className="w-full py-2">
                 Complete Withdrawal
               </WoodButton>
             )}
@@ -1973,13 +2385,13 @@ const TreasureHuntMockup = () => {
                           setMapPurchaseError(null);
                         }}
                         placeholder="USDC amount"
-                        disabled={mapPurchasing || !interactionsEnabled}
+                        disabled={mapPurchasing || !interactionsEnabled || txBusy}
                         className="w-full rounded p-3 font-fell text-lg text-center mb-2"
                         style={{
                           background: '#faf6f0',
                           border: '1px solid #a08060',
                           color: '#3d3210',
-                          opacity: mapPurchasing ? 0.6 : 1,
+                          opacity: mapPurchasing || !interactionsEnabled || txBusy ? 0.6 : 1,
                         }}
                       />
                       <div className="flex justify-between mb-3 font-fell text-xs" style={{ color: '#6b5c47' }}>
@@ -1991,16 +2403,32 @@ const TreasureHuntMockup = () => {
                         )}
                       </div>
 
+                      {readEnabled && needsMapApproval && (
+                        <button
+                          onClick={approveUsdcForMap}
+                          disabled={mapPurchasing || mapPurchaseRaw === 0n || txBusy}
+                          className="w-full py-2 rounded font-fell mb-2"
+                          style={{
+                            background: '#8b7355',
+                            color: '#f5ece0',
+                            opacity: (mapPurchasing || mapPurchaseRaw === 0n || txBusy) ? 0.6 : 1,
+                            cursor: (mapPurchasing || mapPurchaseRaw === 0n || txBusy) ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          Approve USDC
+                        </button>
+                      )}
+
                       {/* Buy button */}
                       <button
                         onClick={handleMapPurchase}
-                        disabled={mapPurchasing || !mapPurchaseAmount || parseFloat(mapPurchaseAmount) <= 0 || !interactionsEnabled}
+                        disabled={mapPurchasing || !mapPurchaseAmount || parseFloat(mapPurchaseAmount) <= 0 || !interactionsEnabled || (needsMapApproval && readEnabled) || txBusy}
                         className="w-full py-3 rounded font-fell transition-opacity"
                         style={{
                           background: mapPurchasing ? '#8b7355' : '#5c4a32',
                           color: '#f5ece0',
-                          opacity: (!mapPurchaseAmount || parseFloat(mapPurchaseAmount) <= 0 || !interactionsEnabled) ? 0.5 : 1,
-                          cursor: (mapPurchasing || !mapPurchaseAmount || parseFloat(mapPurchaseAmount) <= 0 || !interactionsEnabled) ? 'not-allowed' : 'pointer',
+                          opacity: (!mapPurchaseAmount || parseFloat(mapPurchaseAmount) <= 0 || !interactionsEnabled || (needsMapApproval && readEnabled) || txBusy) ? 0.5 : 1,
+                          cursor: (mapPurchasing || !mapPurchaseAmount || parseFloat(mapPurchaseAmount) <= 0 || !interactionsEnabled || (needsMapApproval && readEnabled) || txBusy) ? 'not-allowed' : 'pointer',
                         }}
                       >
                         {mapPurchasing ? 'Confirming...' : mapPurchaseSuccess ? '✓ Acquired' : 'Acquire MAP'}
@@ -2058,13 +2486,13 @@ const TreasureHuntMockup = () => {
                           setMapSellError(null);
                         }}
                         placeholder="MAP amount"
-                        disabled={mapSelling || !interactionsEnabled}
+                        disabled={mapSelling || !interactionsEnabled || txBusy}
                         className="w-full rounded p-3 font-fell text-lg text-center mb-2"
                         style={{
                           background: '#faf6f0',
                           border: '1px solid #a08060',
                           color: '#3d3210',
-                          opacity: mapSelling || !interactionsEnabled ? 0.6 : 1,
+                          opacity: mapSelling || !interactionsEnabled || txBusy ? 0.6 : 1,
                         }}
                       />
                       <div className="flex justify-between mb-3 font-fell text-xs" style={{ color: '#6b5c47' }}>
@@ -2099,13 +2527,13 @@ const TreasureHuntMockup = () => {
                       {/* Sell button */}
                       <button
                         onClick={handleMapSell}
-                        disabled={mapSelling || !mapSellAmount || parseFloat(mapSellAmount) <= 0 || parseFloat(mapSellAmount) > mapBalance || !interactionsEnabled}
+                        disabled={mapSelling || !mapSellAmount || parseFloat(mapSellAmount) <= 0 || parseFloat(mapSellAmount) > mapBalance || !interactionsEnabled || txBusy}
                         className="w-full py-3 rounded font-fell transition-opacity"
                         style={{
                           background: mapSelling ? '#8b5555' : '#8b4040',
                           color: '#f5ece0',
-                          opacity: (!mapSellAmount || parseFloat(mapSellAmount) <= 0 || parseFloat(mapSellAmount) > mapBalance || !interactionsEnabled) ? 0.5 : 1,
-                          cursor: (mapSelling || !mapSellAmount || parseFloat(mapSellAmount) <= 0 || parseFloat(mapSellAmount) > mapBalance || !interactionsEnabled) ? 'not-allowed' : 'pointer',
+                          opacity: (!mapSellAmount || parseFloat(mapSellAmount) <= 0 || parseFloat(mapSellAmount) > mapBalance || !interactionsEnabled || txBusy) ? 0.5 : 1,
+                          cursor: (mapSelling || !mapSellAmount || parseFloat(mapSellAmount) <= 0 || parseFloat(mapSellAmount) > mapBalance || !interactionsEnabled || txBusy) ? 'not-allowed' : 'pointer',
                         }}
                       >
                         {mapSelling ? 'Confirming...' : mapSellSuccess ? '✓ Returned' : 'Return MAP to the Sea'}
