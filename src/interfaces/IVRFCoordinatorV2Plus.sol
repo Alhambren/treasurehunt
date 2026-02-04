@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 interface IVRFCoordinatorV2Plus {
     function requestRandomWords(
         bytes32 keyHash,
-        uint64 subId,
+        uint256 subId,
         uint16 minimumRequestConfirmations,
         uint32 callbackGasLimit,
         uint32 numWords

@@ -26,7 +26,7 @@ contract TreasureHuntDeployer {
     address public immutable aerodromeRouter;
     address public immutable vrfCoordinator;
     bytes32 public immutable keyHash;
-    uint64 public immutable subscriptionId;
+    uint256 public immutable subscriptionId;
     bytes32 public immutable merkleRoot;
 
     bool public deployed;
@@ -51,7 +51,7 @@ contract TreasureHuntDeployer {
         address aerodromeRouter_,
         address vrfCoordinator_,
         bytes32 keyHash_,
-        uint64 subscriptionId_,
+        uint256 subscriptionId_,
         bytes32 merkleRoot_
     ) {
         require(usdc_ != address(0), "USDC required");

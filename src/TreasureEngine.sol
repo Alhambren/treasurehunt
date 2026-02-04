@@ -78,7 +78,7 @@ contract TreasureEngine is VRFConsumerBaseV2Plus, ReentrancyGuard {
     // === VRF config ===
     IVRFCoordinatorV2Plus public immutable vrfCoordinatorContract;
     bytes32 public immutable keyHash;
-    uint64 public immutable subscriptionId;
+    uint256 public immutable subscriptionId;
 
     // === Routing state ===
     // Queued HUNT buys are retried by keepers and never block exploration
@@ -124,7 +124,7 @@ contract TreasureEngine is VRFConsumerBaseV2Plus, ReentrancyGuard {
         address aerodromeRouter_,
         address vrfCoordinator_,
         bytes32 keyHash_,
-        uint64 subscriptionId_
+        uint256 subscriptionId_
     ) VRFConsumerBaseV2Plus(vrfCoordinator_) {
         require(usdc_ != address(0), "USDC required");
         require(huntToken_ != address(0), "HUNT required");
