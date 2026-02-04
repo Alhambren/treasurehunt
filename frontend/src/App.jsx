@@ -9,8 +9,9 @@ import {
   useDisconnect,
   useWriteContract,
   useWaitForTransactionReceipt,
+  usePublicClient,
 } from 'wagmi';
-import { erc20Abi, formatUnits, isAddress, parseUnits } from 'viem';
+import { erc20Abi, formatUnits, isAddress, parseUnits, maxUint256 } from 'viem';
 
 import {
   addresses,
@@ -115,6 +116,15 @@ const formatError = (error) => {
   return 'Transaction failed';
 };
 
+const normalizeBlockNumber = (value) => {
+  if (value === null || value === undefined) return null;
+  try {
+    return Number(value);
+  } catch {
+    return null;
+  }
+};
+
 // Overlay: pointerEvents: none — note does NOT stay open when hovering the note
 const CartographerNotesOverlay = ({ activeNote, position }) => {
   if (!activeNote) return null;
@@ -192,6 +202,7 @@ const TreasureHuntMockup = () => {
   const { switchChain } = useSwitchChain();
   const { disconnect } = useDisconnect();
   const { writeContractAsync } = useWriteContract();
+  const publicClient = usePublicClient();
 
   const isWrongNetwork = isConnected && chainId !== SUPPORTED_CHAIN_ID;
   const readEnabled = isConnected && !isWrongNetwork && configReady;
@@ -249,6 +260,8 @@ const TreasureHuntMockup = () => {
 
   // Wallet Display State
   const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
+
+  const logSeqRef = useRef(0);
 
   // Correlated movement indicators
   const [mapPriceTick, setMapPriceTick] = useState(null);
@@ -624,9 +637,32 @@ const TreasureHuntMockup = () => {
     return pool[Math.floor(Math.random() * pool.length)];
   };
 
-  const addLog = (message, type = 'info') => {
-    setLog(prev => [...prev.slice(-9), { message, type, time: new Date().toLocaleTimeString() }]);
+  const addLog = (message, type = 'info', meta = {}) => {
+    const entry = {
+      id: logSeqRef.current++,
+      message,
+      type,
+      time: new Date().toLocaleTimeString(),
+      createdAt: Date.now(),
+      blockNumber: normalizeBlockNumber(meta.blockNumber),
+      logIndex: meta.logIndex ?? null,
+    };
+    setLog(prev => [...prev.slice(-9), entry]);
   };
+
+  const orderedLog = useMemo(() => {
+    const copy = [...log];
+    copy.sort((a, b) => {
+      if (a.blockNumber !== null && b.blockNumber !== null) {
+        if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+        if (a.logIndex !== null && b.logIndex !== null && a.logIndex !== b.logIndex) return a.logIndex - b.logIndex;
+      }
+      const aSeq = a.id ?? 0;
+      const bSeq = b.id ?? 0;
+      return aSeq - bSeq;
+    });
+    return copy;
+  }, [log]);
 
   const submitTx = useCallback(
     async ({ label, onStart, onSuccess, onError, ...tx }) => {
@@ -640,6 +676,15 @@ const TreasureHuntMockup = () => {
       }
       onStart?.();
       try {
+        if (publicClient && address) {
+          try {
+            await publicClient.simulateContract({ ...tx, account: address });
+          } catch (error) {
+            onError?.(error);
+            addLog(formatError(error), 'error');
+            return;
+          }
+        }
         const hash = await writeContractAsync(tx);
         addLog(`${label} submitted`, 'info');
         setPendingTx({ hash, label, onSuccess, onError });
@@ -648,11 +693,17 @@ const TreasureHuntMockup = () => {
         addLog(formatError(error), 'error');
       }
     },
-    [writeContractAsync, pendingTx, addLog]
+    [writeContractAsync, pendingTx, addLog, publicClient, address]
   );
 
   useEffect(() => {
     if (!pendingTx || !pendingReceipt) return;
+    if (pendingReceipt.status === 'reverted') {
+      pendingTx.onError?.(pendingReceipt);
+      addLog('Execution reverted.', 'error');
+      setPendingTx(null);
+      return;
+    }
     pendingTx.onSuccess?.(pendingReceipt);
     addLog(`${pendingTx.label} confirmed`, 'result');
     setPendingTx(null);
@@ -674,8 +725,8 @@ const TreasureHuntMockup = () => {
       logs.forEach((log) => {
         const { discoverer, amount, epochId: epoch } = log.args || {};
         const parsedAmount = amount ? Number(formatUnits(amount, DECIMALS.usdc)) : 0;
-        addLog(`Treasure discovered: ${parsedAmount.toFixed(2)} USDC`, 'discovery');
-        addLog(`Epoch ${epoch ?? '--'} • ${shortAddress(discoverer)}`, 'result');
+        addLog(`Treasure discovered: ${parsedAmount.toFixed(2)} USDC`, 'discovery', { blockNumber: log.blockNumber, logIndex: log.logIndex });
+        addLog(`Epoch ${epoch ?? '--'} • ${shortAddress(discoverer)}`, 'result', { blockNumber: log.blockNumber, logIndex: log.logIndex });
         showFullDiscovery(parsedAmount);
       });
     },
@@ -690,8 +741,8 @@ const TreasureHuntMockup = () => {
       logs.forEach((log) => {
         const { epochId: epoch, newM } = log.args || {};
         const parsedM = newM ? Number(formatUnits(newM, DECIMALS.usdc)) : 0;
-        addLog(`New expedition: M is now ${parsedM.toFixed(2)} USDC`, 'expedition');
-        addLog(`Epoch ${epoch ?? '--'} begins`, 'result');
+        addLog(`New expedition: M is now ${parsedM.toFixed(2)} USDC`, 'expedition', { blockNumber: log.blockNumber, logIndex: log.logIndex });
+        addLog(`Epoch ${epoch ?? '--'} begins`, 'result', { blockNumber: log.blockNumber, logIndex: log.logIndex });
       });
     },
   });
@@ -713,8 +764,8 @@ const TreasureHuntMockup = () => {
           setLastOutcome(outcome);
           setLastFateMessage(getRandomMessage(outcome.name));
         }
-        addLog(`Exploration resolved: ${parsedAmount.toFixed(2)} USDC → ${parsedPayout.toFixed(2)} USDC`, 'result');
-        addLog(`${shortAddress(participant)} • Outcome ${outcomeIndex ?? '--'}`, 'expedition');
+        addLog(`Exploration resolved: ${parsedAmount.toFixed(2)} USDC → ${parsedPayout.toFixed(2)} USDC`, 'result', { blockNumber: log.blockNumber, logIndex: log.logIndex });
+        addLog(`${shortAddress(participant)} • Outcome ${outcomeIndex ?? '--'}`, 'expedition', { blockNumber: log.blockNumber, logIndex: log.logIndex });
       });
     },
   });
@@ -729,8 +780,8 @@ const TreasureHuntMockup = () => {
         const { buyer, usdcIn, mapOut } = log.args || {};
         const parsedUsdc = usdcIn ? Number(formatUnits(usdcIn, DECIMALS.usdc)) : 0;
         const parsedMap = mapOut ? Number(formatUnits(mapOut, DECIMALS.map)) : 0;
-        addLog(`MAP bought: ${parsedMap.toFixed(3)} MAP`, 'map');
-        addLog(`${shortAddress(buyer)} • ${parsedUsdc.toFixed(2)} USDC`, 'result');
+        addLog(`MAP bought: ${parsedMap.toFixed(3)} MAP`, 'map', { blockNumber: log.blockNumber, logIndex: log.logIndex });
+        addLog(`${shortAddress(buyer)} • ${parsedUsdc.toFixed(2)} USDC`, 'result', { blockNumber: log.blockNumber, logIndex: log.logIndex });
       });
     },
   });
@@ -745,8 +796,8 @@ const TreasureHuntMockup = () => {
         const { seller, mapIn, usdcOut } = log.args || {};
         const parsedUsdc = usdcOut ? Number(formatUnits(usdcOut, DECIMALS.usdc)) : 0;
         const parsedMap = mapIn ? Number(formatUnits(mapIn, DECIMALS.map)) : 0;
-        addLog(`MAP sold: ${parsedMap.toFixed(3)} MAP`, 'map');
-        addLog(`${shortAddress(seller)} • ${parsedUsdc.toFixed(2)} USDC`, 'result');
+        addLog(`MAP sold: ${parsedMap.toFixed(3)} MAP`, 'map', { blockNumber: log.blockNumber, logIndex: log.logIndex });
+        addLog(`${shortAddress(seller)} • ${parsedUsdc.toFixed(2)} USDC`, 'result', { blockNumber: log.blockNumber, logIndex: log.logIndex });
       });
     },
   });
@@ -781,7 +832,7 @@ const TreasureHuntMockup = () => {
       address: addresses.usdc,
       abi: erc20Abi,
       functionName: 'approve',
-      args: [addresses.treasureEngine, betAmountRaw],
+      args: [addresses.treasureEngine, maxUint256],
     });
   };
 
@@ -799,7 +850,7 @@ const TreasureHuntMockup = () => {
       address: addresses.usdc,
       abi: erc20Abi,
       functionName: 'approve',
-      args: [addresses.mapToken, mapPurchaseRaw],
+      args: [addresses.mapToken, maxUint256],
     });
   };
 
@@ -817,7 +868,7 @@ const TreasureHuntMockup = () => {
       address: addresses.huntToken,
       abi: erc20Abi,
       functionName: 'approve',
-      args: [addresses.huntStaking, stakeAmountRaw],
+      args: [addresses.huntStaking, maxUint256],
     });
   };
 
@@ -1589,7 +1640,7 @@ const TreasureHuntMockup = () => {
                   </button>
                 </div>
                 <p className="font-fell text-sm italic mt-1" style={{ color: '#6b5c47' }}>
-                  Expedition № {epochId} — {log.length} entries recorded
+                  Expedition № {epochId} — {orderedLog.length} entries recorded
                 </p>
               </div>
 
@@ -1598,13 +1649,13 @@ const TreasureHuntMockup = () => {
                 className="overflow-y-auto p-4 font-fell"
                 style={{ maxHeight: 'calc(80vh - 100px)', color: '#3d2818' }}
               >
-                {log.length === 0 ? (
+                {orderedLog.length === 0 ? (
                   <p className="text-center italic py-8" style={{ color: '#6b5c47' }}>
                     The pages remain blank… for now.
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {log.map((entry, i) => (
+                    {orderedLog.map((entry, i) => (
                       <div
                         key={i}
                         className="relative pl-4 py-2 border-l-2"
@@ -1615,7 +1666,7 @@ const TreasureHuntMockup = () => {
                         }}
                       >
                         <span className="text-xs italic block mb-1" style={{ color: '#8b7355' }}>
-                          Entry #{log.length - i}
+                          Entry #{orderedLog.length - i}
                         </span>
                         <span
                           className={entry.type === 'result' ? 'text-sm' : ''}
@@ -2849,13 +2900,13 @@ const TreasureHuntMockup = () => {
 
                 {/* Left Page Entries */}
                 <div className="relative px-4 pb-4 font-fell text-sm leading-relaxed" style={{ color: '#3d2818' }}>
-                  {log.length === 0 ? (
+                  {orderedLog.length === 0 ? (
                     <p className="italic text-center pt-8" style={{ color: '#6b5c47' }}>
                       The sea is calm… for now.
                     </p>
                   ) : (
                     <div className="space-y-2">
-                      {log.slice(0, Math.ceil(log.length / 2)).map((entry, i) => (
+                      {orderedLog.slice(0, Math.ceil(orderedLog.length / 2)).map((entry, i) => (
                         <div key={i} className="relative" style={{ marginLeft: `${(i % 3) * 2}px` }}>
                           {/* Occasional marginalia */}
                           {i === 0 && <span className="absolute -left-3 top-0 text-xs opacity-40">⚓</span>}
@@ -2915,9 +2966,9 @@ const TreasureHuntMockup = () => {
 
                 {/* Right Page Entries */}
                 <div className="relative px-4 pb-4 font-fell text-sm leading-relaxed" style={{ color: '#3d2818' }}>
-                  {log.length > Math.ceil(log.length / 2) ? (
+                  {orderedLog.length > Math.ceil(orderedLog.length / 2) ? (
                     <div className="space-y-2">
-                      {log.slice(Math.ceil(log.length / 2)).map((entry, i) => (
+                      {orderedLog.slice(Math.ceil(orderedLog.length / 2)).map((entry, i) => (
                         <div key={i} className="relative" style={{ marginLeft: `${((i + 1) % 3) * 2}px` }}>
                           {/* Occasional marginalia */}
                           {entry.type === 'reward' && <span className="absolute -left-3 top-0 text-xs opacity-40">●</span>}
