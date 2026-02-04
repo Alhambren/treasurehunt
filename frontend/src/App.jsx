@@ -112,6 +112,11 @@ const formatError = (error) => {
   if (!error) return 'Unknown error';
   if (typeof error === 'string') return error;
   if (error.shortMessage) return error.shortMessage;
+  if (error.cause?.shortMessage) return error.cause.shortMessage;
+  if (error.cause?.message) return error.cause.message;
+  if (error.cause?.data?.errorName) return error.cause.data.errorName;
+  if (error.data?.errorName) return error.data.errorName;
+  if (error.reason) return error.reason;
   if (error.message) return error.message;
   return 'Transaction failed';
 };
@@ -300,7 +305,7 @@ const TreasureHuntMockup = () => {
       : [],
     query: {
       enabled: readEnabled,
-      refetchInterval: false,
+      refetchInterval: 5000,
       watch: true,
     },
   });
@@ -322,7 +327,7 @@ const TreasureHuntMockup = () => {
         : [],
     query: {
       enabled: readEnabled && !!address,
-      refetchInterval: false,
+      refetchInterval: 5000,
       watch: true,
     },
   });
@@ -339,7 +344,7 @@ const TreasureHuntMockup = () => {
         : [],
     query: {
       enabled: readEnabled && !!address,
-      refetchInterval: false,
+      refetchInterval: 5000,
       watch: true,
     },
   });
@@ -650,6 +655,12 @@ const TreasureHuntMockup = () => {
     setLog(prev => [...prev.slice(-9), entry]);
   };
 
+  const refetchAll = useCallback(() => {
+    globalReads.refetch?.();
+    userReads.refetch?.();
+    allowanceReads.refetch?.();
+  }, [globalReads, userReads, allowanceReads]);
+
   const orderedLog = useMemo(() => {
     const copy = [...log];
     copy.sort((a, b) => {
@@ -706,8 +717,9 @@ const TreasureHuntMockup = () => {
     }
     pendingTx.onSuccess?.(pendingReceipt);
     addLog(`${pendingTx.label} confirmed`, 'result');
+    refetchAll();
     setPendingTx(null);
-  }, [pendingReceipt, pendingTx]);
+  }, [pendingReceipt, pendingTx, refetchAll]);
 
   useEffect(() => {
     if (!pendingTx || !pendingReceiptError) return;
@@ -715,6 +727,8 @@ const TreasureHuntMockup = () => {
     addLog(formatError(pendingReceiptError), 'error');
     setPendingTx(null);
   }, [pendingReceiptError, pendingTx]);
+
+  const userAddressLower = address?.toLowerCase();
 
   useWatchContractEvent({
     address: readEnabled ? addresses.treasureEngine : undefined,
@@ -729,6 +743,7 @@ const TreasureHuntMockup = () => {
         addLog(`Epoch ${epoch ?? '--'} • ${shortAddress(discoverer)}`, 'result', { blockNumber: log.blockNumber, logIndex: log.logIndex });
         showFullDiscovery(parsedAmount);
       });
+      refetchAll();
     },
   });
 
@@ -744,6 +759,7 @@ const TreasureHuntMockup = () => {
         addLog(`New expedition: M is now ${parsedM.toFixed(2)} USDC`, 'expedition', { blockNumber: log.blockNumber, logIndex: log.logIndex });
         addLog(`Epoch ${epoch ?? '--'} begins`, 'result', { blockNumber: log.blockNumber, logIndex: log.logIndex });
       });
+      refetchAll();
     },
   });
 
@@ -767,6 +783,7 @@ const TreasureHuntMockup = () => {
         addLog(`Exploration resolved: ${parsedAmount.toFixed(2)} USDC → ${parsedPayout.toFixed(2)} USDC`, 'result', { blockNumber: log.blockNumber, logIndex: log.logIndex });
         addLog(`${shortAddress(participant)} • Outcome ${outcomeIndex ?? '--'}`, 'expedition', { blockNumber: log.blockNumber, logIndex: log.logIndex });
       });
+      refetchAll();
     },
   });
 
@@ -782,7 +799,11 @@ const TreasureHuntMockup = () => {
         const parsedMap = mapOut ? Number(formatUnits(mapOut, DECIMALS.map)) : 0;
         addLog(`MAP bought: ${parsedMap.toFixed(3)} MAP`, 'map', { blockNumber: log.blockNumber, logIndex: log.logIndex });
         addLog(`${shortAddress(buyer)} • ${parsedUsdc.toFixed(2)} USDC`, 'result', { blockNumber: log.blockNumber, logIndex: log.logIndex });
+        if (buyer && userAddressLower && buyer.toLowerCase() === userAddressLower) {
+          setMapBalance((prev) => prev + parsedMap);
+        }
       });
+      refetchAll();
     },
   });
 
@@ -798,7 +819,11 @@ const TreasureHuntMockup = () => {
         const parsedMap = mapIn ? Number(formatUnits(mapIn, DECIMALS.map)) : 0;
         addLog(`MAP sold: ${parsedMap.toFixed(3)} MAP`, 'map', { blockNumber: log.blockNumber, logIndex: log.logIndex });
         addLog(`${shortAddress(seller)} • ${parsedUsdc.toFixed(2)} USDC`, 'result', { blockNumber: log.blockNumber, logIndex: log.logIndex });
+        if (seller && userAddressLower && seller.toLowerCase() === userAddressLower) {
+          setMapBalance((prev) => Math.max(0, prev - parsedMap));
+        }
       });
+      refetchAll();
     },
   });
 
