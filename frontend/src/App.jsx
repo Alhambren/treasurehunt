@@ -211,8 +211,8 @@ const TreasureHuntMockup = () => {
 
   const isWrongNetwork = isConnected && chainId !== SUPPORTED_CHAIN_ID;
   const readEnabled = isConnected && !isWrongNetwork && configReady;
-  const demoOnly = DEMO_MODE && !readEnabled;
-  const interactionsEnabled = readEnabled || demoOnly;
+  const demoExploration = DEMO_MODE;
+  const interactionsEnabled = readEnabled || DEMO_MODE;
 
   // Global state
   const [J, setJ] = useState(0);
@@ -899,7 +899,7 @@ const TreasureHuntMockup = () => {
 
   // Canonical: "Begin Exploration" (never "bet" or "wager")
   const placeBet = async () => {
-    if (demoOnly) {
+    if (demoExploration) {
       if (betAmount < 0.10) {
         addLog("The sea refuses the command.", 'error');
         return;
@@ -1011,7 +1011,7 @@ const TreasureHuntMockup = () => {
 
   // Staking functions (canonical: "Ship's Hold")
   const stake = async (amount) => {
-    if (demoOnly) {
+    if (DEMO_MODE) {
       if (amount <= 0 || amount > huntBalance) return;
       setHuntBalance(prev => prev - amount);
       setStakedHunt(prev => prev + amount);
@@ -1038,7 +1038,7 @@ const TreasureHuntMockup = () => {
   };
 
   const initiateWithdraw = async () => {
-    if (demoOnly) {
+    if (DEMO_MODE) {
       if (stakedHunt <= 0 || cooldownStart) return;
       setCooldownStart(Date.now());
       addLog("The gangplank lowers in seven days.", 'stake');
@@ -1058,7 +1058,7 @@ const TreasureHuntMockup = () => {
   };
 
   const cancelWithdraw = async () => {
-    if (demoOnly) {
+    if (DEMO_MODE) {
       setCooldownStart(null);
       addLog("No sailor leaves mid-watch.", 'stake');
       return;
@@ -1077,7 +1077,7 @@ const TreasureHuntMockup = () => {
   };
 
   const completeWithdraw = async () => {
-    if (demoOnly) {
+    if (DEMO_MODE) {
       if (cooldownRemaining > 0) return;
       const amount = stakedHunt;
       setStakedHunt(0);
@@ -1103,7 +1103,7 @@ const TreasureHuntMockup = () => {
   };
 
   const claimRewards = async () => {
-    if (demoOnly) {
+    if (DEMO_MODE) {
       if (pendingRewards > 0) {
         setBalance(prev => prev + pendingRewards);
         addLog("The crew's share has been claimed.", 'reward');
@@ -1133,7 +1133,7 @@ const TreasureHuntMockup = () => {
   };
 
   const handleMapPurchase = () => {
-    if (demoOnly) {
+    if (DEMO_MODE) {
       setMapPurchaseError(null);
       const amount = parseFloat(mapPurchaseAmount) || 0;
 
@@ -1232,7 +1232,7 @@ const TreasureHuntMockup = () => {
   };
 
   const handleMapSell = () => {
-    if (demoOnly) {
+    if (DEMO_MODE) {
       setMapSellError(null);
       const amount = parseFloat(mapSellAmount) || 0;
 
@@ -1940,6 +1940,11 @@ const TreasureHuntMockup = () => {
             >
               {isSpinning ? '🧭 The oracle peers into the deep…' : '🧭 Begin Exploration'}
             </WoodButton>
+            {DEMO_MODE && (
+              <div className="font-fell text-xs italic text-center mt-2" style={{ color: '#6b5c47' }}>
+                Demo exploration is simulated (VRF not required).
+              </div>
+            )}
 
             {lastOutcome && !isSpinning && (
               <div className="mt-3 p-3 rounded" style={{
