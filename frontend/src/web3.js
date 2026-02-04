@@ -1,16 +1,16 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
-import { http } from 'viem';
+import { http } from 'wagmi';
+import { base, baseSepolia } from 'wagmi/chains';
 
-import { SUPPORTED_CHAIN, walletConnectProjectId } from './config.js';
+const CHAIN_ENV = (import.meta.env.VITE_CHAIN_ENV ?? 'mainnet').toLowerCase();
+const SUPPORTED_CHAIN = CHAIN_ENV === 'sepolia' ? baseSepolia : base;
 
-const projectId = walletConnectProjectId || '00000000000000000000000000000000';
-
-export const appChains = [SUPPORTED_CHAIN];
+const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || '00000000000000000000000000000000';
 
 export const wagmiConfig = getDefaultConfig({
   appName: 'Treasure Hunt',
   projectId,
-  chains: appChains,
+  chains: [SUPPORTED_CHAIN],
   ssr: false,
   transports: {
     [SUPPORTED_CHAIN.id]: http(),
