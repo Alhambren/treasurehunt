@@ -992,7 +992,26 @@ const TreasureHuntMockup = () => {
       addLog("The sea refuses the command.", 'error');
       return;
     }
-    if (needsEngineApproval) {
+    if (publicClient && address) {
+      try {
+        const currentAllowance = await publicClient.readContract({
+          address: addresses.usdc,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [address, addresses.treasureEngine],
+        });
+        if (currentAllowance < betAmountRaw) {
+          addLog('Approve USDC before beginning exploration.', 'info');
+          return;
+        }
+      } catch {
+        // If the read fails, fall back to the cached allowance check.
+        if (needsEngineApproval) {
+          addLog('Approve USDC before beginning exploration.', 'info');
+          return;
+        }
+      }
+    } else if (needsEngineApproval) {
       addLog('Approve USDC before beginning exploration.', 'info');
       return;
     }
@@ -1929,7 +1948,7 @@ const TreasureHuntMockup = () => {
                 variant="secondary"
                 className="w-full py-2 mb-2"
               >
-                Approve USDC
+                Approve USDC for Exploration
               </WoodButton>
             )}
 
