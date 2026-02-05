@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
 import {TreasureHuntDeployer} from "../src/TreasureHuntDeployer.sol";
+import {MockAerodromeRouter} from "../src/utils/MockAerodromeRouter.sol";
 
 contract DeployTreasureHunt is Script {
     function run() external {
@@ -17,6 +18,12 @@ contract DeployTreasureHunt is Script {
         bytes32 merkleRoot = vm.envBytes32("AIRDROP_MERKLE_ROOT");
 
         vm.startBroadcast();
+
+        if (aerodromeRouter == address(0)) {
+            MockAerodromeRouter mockRouter = new MockAerodromeRouter();
+            aerodromeRouter = address(mockRouter);
+            console2.log("MockAerodromeRouter:", aerodromeRouter);
+        }
 
         TreasureHuntDeployer deployer = new TreasureHuntDeployer(
             usdc,

@@ -7,12 +7,24 @@ Copy `.env.deploy.example` to `.env.deploy` and fill in:
 - all address params (cartographer, mapMaker, liquidity, aerodrome router)
 - `VRF_SUBSCRIPTION_ID` (full integer from Chainlink UI)
 - `AIRDROP_MERKLE_ROOT` (use `0x00..00` if not ready)
+If `AERODROME_ROUTER` is zero, the script will deploy a MockAerodromeRouter for testnet demos.
 
 ## 2) Deploy
 From repo root:
 ```bash
 source .env.deploy
 forge script script/DeployTreasureHunt.s.sol:DeployTreasureHunt \
+  --rpc-url "$RPC_URL" \
+  --private-key "$PRIVATE_KEY" \
+  --broadcast
+```
+
+### Testnet shortcut (recommended)
+The on-chain Deployer contract exceeds the EIP-170 size limit. For Base Sepolia demos,
+use the direct deploy script instead:
+```bash
+source .env.deploy
+forge script script/DeployTreasureHuntDirect.s.sol:DeployTreasureHuntDirect \
   --rpc-url "$RPC_URL" \
   --private-key "$PRIVATE_KEY" \
   --broadcast
